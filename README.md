@@ -4,17 +4,12 @@
 > Build prompts by drawing, see the model's thinking projected back into the
 > same figure.
 
-```
-                          ◉ persona
-                              ●
-                            /   \
-                          /       \
-                  △ ━━━━━ ◯ ━━━━━ ⊞
-              reasoning                 tools
-                          ╲ ⌬ ╱
-                            ▽
-                          limits
-```
+![Prompt Sigil web app, complex prompt with thought trajectory](docs/preview.png)
+
+| 1. blank | 2. place glyphs | 3. bridge | 4. conjure |
+|:---:|:---:|:---:|:---:|
+| ![](docs/01-blank.png) | ![](docs/02-typed.png) | ![](docs/03-bridged.png) | ![](docs/04-conjured.png) |
+| empty canvas | click `◉ △ ⊞ ▽ ✦` to place typed sections (snap to rim) | click two vertices to bridge | scaffold + conjure → real sigil with k-NN polygon |
 
 ## What this is
 
