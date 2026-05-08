@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Generated artefacts (keep folder, ignore contents)
+out/*
+!out/.gitkeep
+
+# gstack browse skill local state — contains session tokens, audit logs,
+# and absolute filesystem paths. Never commit.
+.gstack/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Environment / secrets
+.env
+.env.local
+*.key
+*.pem
+
+# Models cached locally by transformers.js (browser IndexedDB) — N/A, but
+# any future server-side model cache:
+.cache/
+models/

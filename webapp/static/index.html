@@ -1,0 +1,2401 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>prompt sigil</title>
+<style>
+  :root {
+    --bg: #f5f3ec;
+    --ink: #101010;
+    --sub: #444;
+    --mute: #888;
+    --panel: #ece9dd;
+    --hi: #fff5b8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  body { display: grid; grid-template-columns: 420px 1fr; height: 100vh; }
+  .left {
+    border-right: 1px solid #d8d4c4;
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    min-height: 0;
+  }
+  .controls {
+    padding: 12px 14px;
+    border-bottom: 1px solid #d8d4c4;
+    display: grid;
+    gap: 8px;
+  }
+  .controls h1 {
+    margin: 0;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+  }
+  textarea {
+    width: 100%;
+    height: 110px;
+    border: 1px solid #c8c3b1;
+    background: var(--panel);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 8px;
+    resize: vertical;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  button {
+    border: 1px solid var(--ink);
+    background: var(--bg);
+    color: var(--ink);
+    padding: 4px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--ink); color: var(--bg); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  select, input[type="range"] { font-family: inherit; }
+  .reading {
+    overflow-y: auto;
+    padding: 10px 14px;
+    border-bottom: 1px solid #d8d4c4;
+    line-height: 1.45;
+    font-size: 12px;
+    background: var(--bg);
+    min-height: 0;
+  }
+  .reading .unit {
+    margin: 0 0 5px 0;
+    padding: 1px 4px;
+    color: #bbb;
+    border-left: 2px solid transparent;
+    transition: color 200ms, background 200ms, border-left-color 200ms;
+    word-break: break-word;
+  }
+  .reading .unit.read { color: var(--ink); }
+  .reading .unit.now {
+    background: var(--hi);
+    color: var(--ink);
+  }
+  .reading .heading {
+    font-weight: 700;
+    color: var(--ink);
+    border-left-color: currentColor;
+    padding-left: 6px;
+    margin-top: 8px;
+    background: transparent !important;
+  }
+  .stats {
+    padding: 8px 14px;
+    border-top: 1px solid #d8d4c4;
+    color: var(--mute);
+    font-size: 11px;
+    line-height: 1.4;
+    background: var(--panel);
+  }
+  .stats b { color: var(--ink); font-weight: 600; }
+  .right {
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  svg {
+    width: min(100vmin, 100vh);
+    height: min(100vmin, 100vh);
+    display: block;
+  }
+  .mute { color: var(--mute); }
+  .label-now {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--sub);
+  }
+  .label-now b { color: var(--ink); }
+
+  /* live inference panel */
+  .live { background: var(--panel); border-bottom: 1px solid #d8d4c4; }
+  .live > summary {
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    list-style: none;
+    user-select: none;
+  }
+  .live > summary::before {
+    content: "▶ ";
+    display: inline-block;
+    transition: transform 150ms;
+  }
+  .live[open] > summary::before { content: "▼ "; }
+  .live[open] > summary { border-bottom: 1px solid #d8d4c4; }
+  .live-body { padding: 10px 14px; display: grid; gap: 8px; }
+  .live select, .live input[type="text"], .live input[type="number"] {
+    border: 1px solid #c8c3b1;
+    background: var(--bg);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 5px;
+  }
+  .live textarea { height: 60px; }
+  .live #model-status {
+    font-size: 10px;
+    color: var(--mute);
+    word-break: break-all;
+  }
+  .thought-output {
+    background: #fff;
+    border: 1px solid #c8c3b1;
+    padding: 6px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    max-height: 160px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 32px;
+    color: #333;
+  }
+  .thought-output:empty::before {
+    content: "(no output yet)";
+    color: #aaa;
+  }
+
+  /* --- Sigil rotation (CSS so it survives WASM main-thread block) --- */
+  #rotation-group {
+    transform-origin: 800px 800px;
+    animation: sigil-rotate 400s linear infinite;
+    will-change: transform;
+  }
+  @keyframes sigil-rotate {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  /* --- Thinking mode: speed-up + central pulse + emanating rings --- */
+  body.thinking #rotation-group {
+    animation-duration: 80s;
+  }
+  body.thinking #seal {
+    transform-origin: 800px 800px;
+    animation: seal-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes seal-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.06); }
+  }
+  /* The thinking-rings circles share the same cx/cy as the seal centre and
+     scale outward toward the rim (R_BOUND_OUT = 740, base r = 80 => 9.25x). */
+  .thinking-ring {
+    transform-origin: 800px 800px;
+    opacity: 0;
+  }
+  body.thinking .thinking-ring {
+    animation: ring-expand 3s ease-out infinite;
+  }
+  body.thinking .thinking-ring:nth-child(2) { animation-delay: 1s; }
+  body.thinking .thinking-ring:nth-child(3) { animation-delay: 2s; }
+  @keyframes ring-expand {
+    0%   { transform: scale(1);    opacity: 0; }
+    10%  { opacity: 0.85; }
+    100% { transform: scale(9.25); opacity: 0; }
+  }
+  /* During thinking, the output panel hints "live" with a soft border pulse */
+  body.thinking .thought-output {
+    animation: thought-edge 1.6s ease-in-out infinite;
+    border-color: hsl(45 80% 50%);
+  }
+  @keyframes thought-edge {
+    0%, 100% { box-shadow: 0 0 0 0 hsla(45,80%,50%,0); }
+    50%      { box-shadow: 0 0 0 3px hsla(45,80%,50%,0.25); }
+  }
+
+  /* --- Drawing mode (human draws on the sigil) --- */
+  body.drawing svg {
+    cursor: crosshair;
+  }
+  body.drawing .interpret-hint {
+    background: hsl(45 80% 92%);
+    border-color: hsl(45 70% 50%);
+  }
+  .interpret-hint {
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 6px 8px;
+    background: var(--panel);
+    border: 1px solid #c8c3b1;
+    color: var(--ink);
+    min-height: 24px;
+  }
+  .interpret-hint:empty::before {
+    content: "(no marks yet — toggle ✎ to draw on the circle)";
+    color: var(--mute);
+    font-style: italic;
+  }
+  .draw-controls button.active {
+    background: var(--ink);
+    color: var(--bg);
+  }
+  /* Affected-section highlight: applied to a vertex element when a stroke
+     marks the section. Pure CSS so it animates even during inference. */
+  @keyframes affected-glow {
+    0%, 100% { stroke-width: 0.9;  filter: none; }
+    50%      { stroke-width: 2.2;  filter: drop-shadow(0 0 6px hsl(45 80% 50%)); }
+  }
+  .affected-vertex { animation: affected-glow 1.4s ease-in-out infinite; }
+
+  /* Type-tool buttons — large glyph for tap targets */
+  #type-tools button {
+    font-size: 16px;
+    line-height: 1;
+    width: 32px;
+    padding: 4px 0;
+  }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="controls">
+      <h1>prompt sigil</h1>
+      <div class="row">
+        <select id="examples">
+          <option value="complex">examples / complex.md</option>
+          <option value="sample">examples / sample.md</option>
+          <option value="memo">memo.md</option>
+          <option value="custom">(custom)</option>
+        </select>
+        <button id="load">load</button>
+      </div>
+      <textarea id="input" placeholder="paste a markdown prompt..."></textarea>
+      <div class="row">
+        <button id="go">conjure</button>
+        <button id="restart" disabled>restart</button>
+        <button id="rotate-toggle" title="pause/resume rotation">⏸</button>
+        <span class="mute">spd</span>
+        <input type="range" id="rotate-speed" min="0" max="100" value="40" style="width:80px" title="rotation speed">
+        <span class="mute">·</span>
+        <input type="range" id="speed" min="1" max="40" value="14" style="width:80px" title="conjure animation speed">
+        <span id="speed-label" class="mute">14</span>
+      </div>
+      <div class="label-now">
+        <span id="now-section" class="mute">—</span>
+      </div>
+    </div>
+
+    <details class="live" id="draw-panel" open>
+      <summary>draw on the sigil (talk to AI in glyphs)</summary>
+      <div class="live-body">
+        <div class="row draw-controls" id="type-tools">
+          <button data-tool="place:persona"    title="self / role">◉</button>
+          <button data-tool="place:reasoning"  title="thought style">△</button>
+          <button data-tool="place:tools"      title="instruments">⊞</button>
+          <button data-tool="place:output"     title="output form">◇</button>
+          <button data-tool="place:style"      title="voice / style">✦</button>
+          <button data-tool="place:limits"     title="constraints">▽</button>
+          <button data-tool="place:memory"     title="memory / context">○</button>
+          <button data-tool="place:examples"   title="examples">⌬</button>
+        </div>
+        <div class="row draw-controls">
+          <button data-tool="bridge" title="click two vertices to bridge">↔ bridge</button>
+          <button data-tool="delete" title="click a vertex to delete">× delete</button>
+          <button data-tool="off" class="active" title="exit compose tools">◯ view</button>
+        </div>
+        <div class="row draw-controls">
+          <button id="draw-toggle" title="freehand drawing (alternative to click tools)">✎ free</button>
+          <button id="draw-clear" title="erase all marks">clear</button>
+          <button id="draw-help" title="show vocabulary">?</button>
+        </div>
+        <div class="row draw-controls">
+          <button id="draw-scaffold" title="generate prompt from drawing/composition">✦ scaffold</button>
+          <button id="draw-blank" title="start from empty canvas">⌂ blank</button>
+        </div>
+        <div class="interpret-hint" id="interpret-hint"></div>
+      </div>
+    </details>
+
+    <details class="live" id="live-panel">
+      <summary>live inference (browser LLM)</summary>
+      <div class="live-body">
+        <div class="row">
+          <select id="model-picker" style="flex:1">
+            <option value="HuggingFaceTB/SmolLM2-135M-Instruct" selected>SmolLM2 135M (~100MB, recommended)</option>
+            <option value="HuggingFaceTB/SmolLM2-360M-Instruct">SmolLM2 360M (~250MB)</option>
+            <option value="onnx-community/Qwen3-0.6B-ONNX">Qwen3 0.6B (~600MB)</option>
+            <option value="onnx-community/gemma-3-270m-it-ONNX">gemma-3 270M (~500MB, large vocab)</option>
+            <option value="onnx-community/gemma-3-1b-it-ONNX">gemma-3 1B (~1GB)</option>
+            <option value="onnx-community/gemma-4-E2B-it-ONNX">gemma-4 E2B (~1.5GB)</option>
+            <option value="custom">(custom HF id...)</option>
+          </select>
+        </div>
+        <input type="text" id="custom-model" placeholder="onnx-community/..." style="display:none">
+        <div class="row">
+          <button id="load-model">load model</button>
+          <label style="font-size:11px;display:flex;align-items:center;gap:3px">
+            <input type="checkbox" id="force-wasm" style="margin:0">force wasm
+          </label>
+          <select id="dtype-choice" style="font-size:11px">
+            <option value="auto" selected>auto</option>
+            <option value="q4">q4</option>
+            <option value="q8">q8</option>
+            <option value="fp16">fp16</option>
+          </select>
+        </div>
+        <div id="model-status" style="word-break:break-all">not loaded</div>
+        <textarea id="query" placeholder="ask the model something about the prompt..."></textarea>
+        <div class="row">
+          <button id="run-llm" disabled>infer</button>
+          <button id="stop-llm" disabled>stop</button>
+          <span class="mute">max</span>
+          <input type="number" id="max-tokens" value="200" min="20" max="2000" style="width:60px">
+          <span class="mute">tok</span>
+        </div>
+        <div class="thought-output" id="thought-output"></div>
+      </div>
+    </details>
+
+    <div class="reading" id="reading"></div>
+
+    <div class="stats" id="stats">
+      <span class="mute">no input yet.</span>
+    </div>
+  </div>
+
+  <div class="right">
+    <svg id="sigil" viewBox="0 0 1600 1600" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="thought-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+          <feMerge>
+            <feMergeNode in="blur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+      <rect width="1600" height="1600" fill="#f5f3ec"/>
+    </svg>
+  </div>
+
+<script type="module">
+"use strict";
+
+import { pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SVG_SIZE = 1600;
+const CX = SVG_SIZE / 2;
+const CY = SVG_SIZE / 2;
+const R = {
+  BOUND_OUT: 740,
+  BOUND_IN: 730,
+  TOKEN_OUT: 720,
+  TOKEN_IN: 692,
+  DIV_IN: 684,
+  VERTEX_OUT: 620,
+  VERTEX: 560,
+  CLOUD: 480,
+  SEAL_OUT: 80,
+  SEAL_IN: 70,
+};
+const INK = "#101010";
+const BG = "#f5f3ec";
+
+const DEFAULT_TEXTS = {
+  memo: "# What makes humans feel awe\n- Awe at numbers\n- Awe at scale\n- Awe at speed\n- Awe at force\n- Awe at quality\n- Awe at motion\n- Reproduction of natural things\n    - Human-like dialogue or paintings\n\n# Idea\n- Build a magic circle by visualising vector representations\n",
+};
+
+class Sigil {
+  constructor() {
+    this.svg = document.getElementById("sigil");
+    this.input = document.getElementById("input");
+    this.go = document.getElementById("go");
+    this.restart = document.getElementById("restart");
+    this.speed = document.getElementById("speed");
+    this.speedLabel = document.getElementById("speed-label");
+    this.examples = document.getElementById("examples");
+    this.loadBtn = document.getElementById("load");
+    this.readingEl = document.getElementById("reading");
+    this.statsEl = document.getElementById("stats");
+    this.nowSection = document.getElementById("now-section");
+
+    this.layout = null;
+    this.layers = {};
+    this.unitEls = [];
+    this.sectionVertexEls = [];
+    this.sectionTickAccum = [];
+    this.lastDot = null;
+    this.lastSectionIdx = -1;
+    this.tokensSeen = 0;
+    this.timer = null;
+    this.lastThoughtPos = null;
+    this.thoughtCount = 0;
+
+    this.go.addEventListener("click", () => this.start());
+    this.restart.addEventListener("click", () => this.start());
+    this.speed.addEventListener("input", () => {
+      this.speedLabel.textContent = this.speed.value;
+    });
+    this.loadBtn.addEventListener("click", () => this.loadExample());
+
+    // Rotation controls
+    this.rotateToggle = document.getElementById("rotate-toggle");
+    this.rotateSpeed = document.getElementById("rotate-speed");
+    this.rotateToggle.addEventListener("click", () => this.toggleRotation());
+    this.rotateSpeed.addEventListener("input", () => this.applyRotationSpeed());
+
+    this.loadExample();
+  }
+
+  toggleRotation() {
+    if (!this.rotationGroup) return;
+    const paused = this.rotationGroup.style.animationPlayState === "paused";
+    this.rotationGroup.style.animationPlayState = paused ? "running" : "paused";
+    // Apply to thinking-rings too so the whole figure halts together.
+    if (this.layers && this.layers.thinkingRings) {
+      [...this.layers.thinkingRings.children].forEach((c) => {
+        c.style.animationPlayState = paused ? "running" : "paused";
+      });
+    }
+    if (this.layers && this.layers.seal) {
+      [...this.layers.seal.children].forEach((c) => {
+        c.style.animationPlayState = paused ? "running" : "paused";
+      });
+    }
+    this.rotateToggle.textContent = paused ? "⏸" : "▶";
+  }
+
+  applyRotationSpeed() {
+    if (!this.rotationGroup) return;
+    // Slider 0-100 → seconds per revolution. 0 means paused.
+    const v = Number(this.rotateSpeed.value);
+    if (v === 0) {
+      this.rotationGroup.style.animationPlayState = "paused";
+      this.rotateToggle.textContent = "▶";
+      return;
+    }
+    // Inverse mapping so higher slider = faster: 100 → 60s/rev, 1 → 1200s/rev
+    const seconds = Math.round(60 + (100 - v) * 11.4);
+    this.rotationGroup.style.animationDuration = `${seconds}s`;
+    this.rotationGroup.style.animationPlayState = "running";
+    this.rotateToggle.textContent = "⏸";
+  }
+
+  async loadExample() {
+    const which = this.examples.value;
+    if (which === "custom") return;
+    const map = {
+      complex: "/files/examples/complex.md",
+      sample: "/files/examples/sample.md",
+      memo: "/files/memo.md",
+    };
+    const url = map[which];
+    if (!url) {
+      if (DEFAULT_TEXTS[which]) this.input.value = DEFAULT_TEXTS[which];
+      return;
+    }
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        this.input.value = await resp.text();
+      } else {
+        this.input.value = DEFAULT_TEXTS[which] || "# Example\n\nPlace your prompt here.";
+      }
+    } catch (e) {
+      this.input.value = DEFAULT_TEXTS[which] || "# Example\n\nPlace your prompt here.";
+    }
+  }
+
+  async prepareLayout() {
+    // Fetches /api/layout, populates state and the static frame (boundary,
+    // dividers, vertex placeholders, k-NN polygon, seal). Does NOT run the
+    // per-sentence reveal animation. Safe to call repeatedly; idempotent for
+    // the same input text.
+    if (this.timer) clearTimeout(this.timer);
+    const text = this.input.value;
+    if (this._lastPreparedText === text && this.layout) return true;
+    this.statsEl.innerHTML = '<span class="mute">computing layout...</span>';
+    let layout;
+    try {
+      const resp = await fetch("/api/layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, title: this.examples.value || "prompt" }),
+      });
+      layout = await resp.json();
+    } catch (e) {
+      this.statsEl.innerHTML = `<span style="color:#a33">error: ${e.message}</span>`;
+      return false;
+    }
+    if (layout.error) {
+      this.statsEl.innerHTML = `<span style="color:#a33">${layout.error}</span>`;
+      return false;
+    }
+    this.layout = layout;
+    this._lastPreparedText = text;
+    this.computeSlots();
+    this.resetSvg();
+    this.populateReadingPanel();
+    this.updateStats();
+    await this.drawFrame();
+    this.tokensSeen = 0;
+    this.lastDot = null;
+    this.lastSectionIdx = -1;
+    this.lastThoughtPos = null;
+    this.thoughtCount = 0;
+    return true;
+  }
+
+  async start() {
+    this.go.disabled = true;
+    this.restart.disabled = true;
+    const ok = await this.prepareLayout();
+    if (!ok) {
+      this.go.disabled = false;
+      return;
+    }
+    this.restart.disabled = false;
+    this.advance(0);
+  }
+
+  computeSlots() {
+    const sections = this.layout.sections;
+    const n = sections.length;
+    const angles = sections.map(s => Math.atan2(s.pos_2d[1], s.pos_2d[0]));
+    const order = [...Array(n).keys()].sort((a, b) => angles[a] - angles[b]);
+    const slotIndex = new Array(n);
+    for (let pos = 0; pos < n; pos++) slotIndex[order[pos]] = pos;
+    let heaviest = 0;
+    for (let i = 1; i < n; i++) {
+      if (sections[i].tokens > sections[heaviest].tokens) heaviest = i;
+    }
+    const slotArc = (2 * Math.PI) / n;
+    const baseCentre = -Math.PI + (slotIndex[heaviest] + 0.5) * slotArc;
+    const rotation = -Math.PI / 2 - baseCentre;
+    sections.forEach((s, i) => {
+      s.slotIndex = slotIndex[i];
+      s.slotArc = slotArc;
+      s.slotCentre = -Math.PI + (slotIndex[i] + 0.5) * slotArc + rotation;
+      s.slotStart = s.slotCentre - slotArc / 2;
+      s.slotEnd = s.slotCentre + slotArc / 2;
+      s.hue = ((s.slotCentre * 180) / Math.PI + 360) % 360;
+      s.vx = CX + R.VERTEX * Math.cos(s.slotCentre);
+      s.vy = CY + R.VERTEX * Math.sin(s.slotCentre);
+    });
+
+    // Cloud scale from 98th percentile of sentence radii
+    const sentences = this.layout.sentences;
+    const radii = sentences.map(s => Math.hypot(s.pos_2d[0], s.pos_2d[1]));
+    radii.sort((a, b) => a - b);
+    const p98 = radii.length > 0 ? radii[Math.floor(radii.length * 0.98)] || 1e-6 : 1;
+    this.cloudScale = R.CLOUD / Math.max(p98, 1e-6);
+
+    // Per-section tick allocation
+    this.sectionTickAccum = sections.map(() => 0);
+    this.sectionTickTotal = sections.map(s => Math.min(s.tokens, 240));
+  }
+
+  resetSvg() {
+    // The structural skeleton (defs, bg, rotation-group, layer groups,
+    // thinking rings) is built once and preserved across rebuilds. This is
+    // critical: replacing #rotation-group restarts its CSS animation from
+    // 0°, which the user perceives as "rotation stops" when re-conjuring or
+    // auto-conjuring at infer-time. Clearing only the children keeps the
+    // animation state alive.
+    if (!this._svgInitialized) {
+      this.svg.innerHTML = "";
+      const defs = document.createElementNS(SVG_NS, "defs");
+      defs.innerHTML = `
+        <filter id="thought-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+          <feMerge>
+            <feMergeNode in="blur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      `;
+      this.svg.appendChild(defs);
+      const bg = document.createElementNS(SVG_NS, "rect");
+      bg.setAttribute("width", SVG_SIZE);
+      bg.setAttribute("height", SVG_SIZE);
+      bg.setAttribute("fill", BG);
+      this.svg.appendChild(bg);
+
+      const rot = document.createElementNS(SVG_NS, "g");
+      rot.setAttribute("id", "rotation-group");
+      this.svg.appendChild(rot);
+      this.rotationGroup = rot;
+
+      const makeR = (id) => {
+        const g = document.createElementNS(SVG_NS, "g");
+        g.setAttribute("id", id);
+        rot.appendChild(g);
+        return g;
+      };
+      const makeFixed = (id) => {
+        const g = document.createElementNS(SVG_NS, "g");
+        g.setAttribute("id", id);
+        this.svg.appendChild(g);
+        return g;
+      };
+
+      this.layers = {
+        boundary: makeR("boundary"),
+        polygon: makeR("polygon-faint"),
+        cloud: makeR("cloud"),
+        sentencePath: makeR("sentence-path"),
+        sectionPath: makeR("section-path"),
+        dividers: makeR("dividers"),
+        ticks: makeR("ticks"),
+        vertices: makeR("vertices"),
+        ornaments: makeR("ornaments"),
+        scanBeam: makeR("scan-beam"),
+        // User-drawn strokes go in the rotation group so they rotate with
+        // the sections they mark. Drawn at logical (paused) coords.
+        userStrokes: makeR("user-strokes"),
+        progressArc: makeFixed("progress-arc"),
+        thinkingRings: makeFixed("thinking-rings"),
+        seal: makeFixed("seal"),
+        centre: makeFixed("centre"),
+      };
+      for (let i = 0; i < 3; i++) {
+        const c = document.createElementNS(SVG_NS, "circle");
+        c.setAttribute("cx", CX);
+        c.setAttribute("cy", CY);
+        c.setAttribute("r", 80);
+        c.setAttribute("fill", "none");
+        c.setAttribute("stroke", "hsl(45 85% 50%)");
+        c.setAttribute("stroke-width", "1.6");
+        c.classList.add("thinking-ring");
+        this.layers.thinkingRings.appendChild(c);
+      }
+      this._svgInitialized = true;
+    } else {
+      // Clear children of all layers but preserve the group elements
+      // themselves so #rotation-group keeps its running CSS animation.
+      for (const [key, el] of Object.entries(this.layers)) {
+        if (key === "thinkingRings") continue; // these are static structure
+        while (el.firstChild) el.removeChild(el.firstChild);
+      }
+    }
+    this.sectionVertexEls = [];
+    this.startRotation();
+  }
+
+  startRotation() {
+    // No-op: rotation now driven by CSS keyframes on #rotation-group, which
+    // run on the compositor and keep animating even while WASM blocks the
+    // main thread. Kept as a method so external callers don't break.
+  }
+
+  setRotationSpeed(seconds) {
+    // Override the CSS animation duration. Pass seconds-per-revolution.
+    if (this.rotationGroup) {
+      this.rotationGroup.style.animationDuration = `${seconds}s`;
+    }
+  }
+
+  async drawFrame() {
+    // Outer boundary
+    this.circle(this.layers.boundary, CX, CY, R.BOUND_OUT, {
+      fill: "none", stroke: INK, "stroke-width": 1.6, "stroke-opacity": 0.85,
+    });
+    this.circle(this.layers.boundary, CX, CY, R.BOUND_IN, {
+      fill: "none", stroke: INK, "stroke-width": 0.8, "stroke-opacity": 0.6,
+    });
+    this.circle(this.layers.boundary, CX, CY, R.DIV_IN, {
+      fill: "none", stroke: INK, "stroke-width": 0.4, "stroke-opacity": 0.3,
+    });
+    this.circle(this.layers.boundary, CX, CY, R.VERTEX_OUT, {
+      fill: "none", stroke: INK, "stroke-width": 0.4, "stroke-opacity": 0.25,
+    });
+
+    // Slot dividers + section vertices appear in document order
+    const sections = this.layout.sections;
+    for (let i = 0; i < sections.length; i++) {
+      const s = sections[i];
+      const a = s.slotStart;
+      const [x1, y1] = polar(R.DIV_IN, a);
+      const [x2, y2] = polar(R.BOUND_IN, a);
+      this.line(this.layers.dividers, x1, y1, x2, y2, {
+        stroke: INK, "stroke-width": 0.5, "stroke-opacity": 0.45,
+      });
+
+      // Initial small vertex disc, will grow with token count progressively
+      const v = this.circle(this.layers.vertices, s.vx, s.vy, 4.5, {
+        fill: `hsl(${s.hue} 65% 55%)`,
+        stroke: INK, "stroke-width": 0.9, "fill-opacity": 0.4,
+      });
+      v.dataset.baseR = "4.5";
+      this.sectionVertexEls.push(v);
+
+      if (i % 4 === 0) await sleep(8);
+    }
+
+    // Faint k-NN polygon background (precomputed)
+    const sim = this.layout.similarity;
+    const edges = knnEdges(sim, 4, 0.08);
+    for (const [a, b, w] of edges) {
+      const sa = sections[a], sb = sections[b];
+      this.line(this.layers.polygon, sa.vx, sa.vy, sb.vx, sb.vy, {
+        stroke: INK, "stroke-width": 0.4,
+        "stroke-opacity": (0.08 + w * 0.20).toFixed(2),
+      });
+    }
+
+    // Central seal
+    this.circle(this.layers.seal, CX, CY, R.SEAL_OUT, {
+      fill: BG, stroke: INK, "stroke-width": 0.9, "stroke-opacity": 0.8,
+    });
+    this.circle(this.layers.seal, CX, CY, R.SEAL_IN, {
+      fill: "none", stroke: INK, "stroke-width": 0.5, "stroke-opacity": 0.45,
+    });
+    const t = document.createElementNS(SVG_NS, "text");
+    t.setAttribute("x", CX);
+    t.setAttribute("y", CY + 5);
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("font-family", "ui-monospace, Menlo, Consolas, monospace");
+    t.setAttribute("font-size", "11");
+    t.setAttribute("fill", "#444");
+    t.textContent = this.layout.title || "";
+    this.layers.centre.appendChild(t);
+
+    // Initial scan beam (invisible)
+    this.beam = this.line(this.layers.scanBeam, CX, CY, CX, CY - R.VERTEX, {
+      stroke: INK, "stroke-width": 1.0, "stroke-opacity": 0,
+      "stroke-dasharray": "4 4",
+    });
+    // Progress arc placeholder
+    this.arcPath = document.createElementNS(SVG_NS, "path");
+    this.arcPath.setAttribute("fill", "none");
+    this.arcPath.setAttribute("stroke", INK);
+    this.arcPath.setAttribute("stroke-width", "5");
+    this.arcPath.setAttribute("stroke-opacity", "0.85");
+    this.arcPath.setAttribute("stroke-linecap", "round");
+    this.layers.progressArc.appendChild(this.arcPath);
+  }
+
+  advance(i) {
+    const sentences = this.layout.sentences;
+    if (i >= sentences.length) {
+      this.drawFinalOrnaments();
+      this.beamFadeOut();
+      this.go.disabled = false;
+      return;
+    }
+    this.drawSentence(i);
+    const delay = Math.max(8, 800 / Number(this.speed.value));
+    this.timer = setTimeout(() => this.advance(i + 1), delay);
+  }
+
+  drawSentence(i) {
+    const s = this.layout.sentences[i];
+    const sec = this.layout.sections[s.section_idx];
+
+    // Reading panel
+    this.unitEls.forEach((el, j) => {
+      el.classList.remove("now");
+      if (j < i) el.classList.add("read");
+    });
+    const cur = this.unitEls[i];
+    if (cur) {
+      cur.classList.add("now");
+      cur.style.background = `hsl(${sec.hue} 70% 86%)`;
+      cur.style.borderLeftColor = `hsl(${sec.hue} 65% 40%)`;
+      cur.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    this.nowSection.innerHTML = `<b style="color:hsl(${sec.hue} 65% 30%)">▸ ${escape(sec.heading)}</b>`;
+
+    // Cloud dot at this sentence's PCA position
+    const dx = CX + s.pos_2d[0] * this.cloudScale;
+    const dy = CY + s.pos_2d[1] * this.cloudScale;
+    const inSeal =
+      (dx - CX) ** 2 + (dy - CY) ** 2 < (R.SEAL_OUT + 4) ** 2;
+    let dot = null;
+    if (!inSeal) {
+      dot = this.circle(this.layers.cloud, dx, dy, 2.2, {
+        fill: `hsl(${sec.hue} 60% 50%)`,
+        "fill-opacity": 0,
+      });
+      this.fadeIn(dot, 220);
+      // halo
+      const halo = this.circle(this.layers.cloud, dx, dy, 12, {
+        fill: "none",
+        stroke: `hsl(${sec.hue} 70% 45%)`,
+        "stroke-width": 1.2,
+        "stroke-opacity": 0.7,
+      });
+      this.expandAndFade(halo, 8, 24, 360);
+    }
+
+    // Connect to last dot
+    if (this.lastDot && dot) {
+      const same = this.lastSectionIdx === s.section_idx;
+      if (same) {
+        const ln = this.line(this.layers.sentencePath,
+          this.lastDot.x, this.lastDot.y, dx, dy, {
+            stroke: `hsl(${sec.hue} 55% 45%)`,
+            "stroke-width": 0.9,
+            "stroke-opacity": 0.55,
+            "stroke-linecap": "round",
+          });
+        this.fadeIn(ln, 200);
+      } else {
+        const arr = this.arrow(this.layers.sentencePath,
+          this.lastDot.x, this.lastDot.y, dx, dy,
+          `hsl(${sec.hue} 65% 35%)`, 1.2, 6, 0.8);
+        this.fadeIn(arr, 220);
+      }
+    }
+    if (dot) {
+      this.lastDot = { x: dx, y: dy };
+    } else if (!this.lastDot) {
+      this.lastDot = { x: dx, y: dy };
+    } else {
+      this.lastDot = { x: dx, y: dy };
+    }
+
+    // Section transition arrow on R_VERTEX ring (document order)
+    if (this.lastSectionIdx >= 0 && this.lastSectionIdx !== s.section_idx) {
+      const prev = this.layout.sections[this.lastSectionIdx];
+      const tFrac = i / Math.max(1, this.layout.sentences.length - 1);
+      const hue = 220 - tFrac * 220;
+      const arr = this.arrow(this.layers.sectionPath,
+        prev.vx, prev.vy, sec.vx, sec.vy,
+        `hsl(${hue.toFixed(0)} 60% 30%)`, 1.6, 9, 0.85);
+      this.fadeIn(arr, 280);
+    }
+
+    // Pulse current section vertex (size grows toward final size)
+    const v = this.sectionVertexEls[s.section_idx];
+    if (v) {
+      v.setAttribute("fill-opacity", 0.95);
+      const r = Number(v.getAttribute("r")) || 4.5;
+      const targetR = 4.5 + Math.log1p(sec.tokens) * 1.4;
+      const newR = Math.min(targetR, r + 0.6 * Math.log1p(s.tokens || 1));
+      v.setAttribute("r", newR);
+      v.dataset.baseR = String(newR);
+    }
+
+    // Add token ticks for this sentence in its section's slot
+    const ntoks = Math.max(1, s.tokens);
+    const totalTicks = this.sectionTickTotal[s.section_idx] || sec.tokens;
+    let placed = this.sectionTickAccum[s.section_idx];
+    const cap = Math.min(this.sectionTickTotal[s.section_idx], placed + ntoks);
+    for (let k = placed; k < cap; k++) {
+      const t = (k + 0.5) / Math.max(1, totalTicks);
+      const a = sec.slotStart + sec.slotArc * (0.04 + t * 0.92);
+      const [x1, y1] = polar(R.TOKEN_IN, a);
+      const [x2, y2] = polar(R.TOKEN_OUT, a);
+      this.line(this.layers.ticks, x1, y1, x2, y2, {
+        stroke: `hsl(${sec.hue} 65% 35%)`,
+        "stroke-width": 0.7,
+        "stroke-opacity": 0.85,
+      });
+    }
+    this.sectionTickAccum[s.section_idx] = cap;
+
+    // Scan beam from centre to current vertex
+    if (this.beam) {
+      this.beam.setAttribute("x1", CX);
+      this.beam.setAttribute("y1", CY);
+      this.beam.setAttribute("x2", sec.vx);
+      this.beam.setAttribute("y2", sec.vy);
+      this.beam.setAttribute("stroke", `hsl(${sec.hue} 65% 30%)`);
+      this.beam.setAttribute("stroke-opacity", "0.55");
+    }
+
+    // Progress arc
+    this.tokensSeen += s.tokens || 1;
+    const total = this.layout.totals.tokens || 1;
+    const frac = Math.min(1, this.tokensSeen / total);
+    this.updateProgressArc(frac);
+
+    this.lastSectionIdx = s.section_idx;
+    this.updateStats(i + 1);
+  }
+
+  drawFinalOrnaments() {
+    // Vertex ornaments — subsection dots, bullet petals, code petals
+    const sections = this.layout.sections;
+    sections.forEach((sec, i) => {
+      const a = sec.slotCentre;
+      const [vx, vy] = [sec.vx, sec.vy];
+      const size = 4.5 + Math.log1p(sec.tokens) * 1.4;
+      const density = sec.imperatives / Math.max(1, sec.tokens);
+      const light = Math.max(28, 55 - Math.min(0.05, density) / 0.05 * 25);
+      const v = this.sectionVertexEls[i];
+      if (v) {
+        v.setAttribute("r", size);
+        v.dataset.baseR = String(size);
+        v.setAttribute("fill", `hsl(${sec.hue} 65% ${light}%)`);
+        v.setAttribute("fill-opacity", "1.0");
+      }
+      const subN = sec.subsections;
+      for (let k = 0; k < subN; k++) {
+        const offset = (k - (subN - 1) / 2) * 5.5;
+        const ax = Math.cos(a + Math.PI / 2);
+        const ay = Math.sin(a + Math.PI / 2);
+        const dxOff = Math.cos(a) * 14;
+        const dyOff = Math.sin(a) * 14;
+        const cx = vx + ax * offset + dxOff;
+        const cy = vy + ay * offset + dyOff;
+        const dot = this.circle(this.layers.ornaments, cx, cy, 1.7, {
+          fill: `hsl(${sec.hue} 65% 40%)`,
+          "fill-opacity": 0,
+        });
+        this.fadeIn(dot, 300);
+      }
+      for (let k = 0; k < sec.bullets; k++) {
+        const spread = (k - (sec.bullets - 1) / 2) * 0.02;
+        const [xa, ya] = polar(R.VERTEX - size - 4, a + spread);
+        const [xb, yb] = polar(R.VERTEX - size - 14, a + spread);
+        const ln = this.line(this.layers.ornaments, xa, ya, xb, yb, {
+          stroke: INK, "stroke-width": 0.7, "stroke-opacity": 0,
+        });
+        this.fadeIn(ln, 280, 0.55);
+      }
+      for (let k = 0; k < sec.code_blocks; k++) {
+        const spread = (k - (sec.code_blocks - 1) / 2) * 0.02;
+        const [xa, ya] = polar(R.VERTEX + size + 4, a + spread);
+        const [xb, yb] = polar(R.VERTEX + size + 14, a + spread);
+        const ln = this.line(this.layers.ornaments, xa, ya, xb, yb, {
+          stroke: INK, "stroke-width": 0.9, "stroke-opacity": 0,
+        });
+        this.fadeIn(ln, 320, 0.7);
+      }
+      for (let k = 0; k < sec.refs; k++) {
+        const spread = (k - (sec.refs - 1) / 2) * 0.012;
+        const [xa, ya] = polar(R.BOUND_OUT + 4, a + spread);
+        const [xb, yb] = polar(R.BOUND_OUT + 18, a + spread);
+        const ln = this.line(this.layers.ornaments, xa, ya, xb, yb, {
+          stroke: INK, "stroke-width": 1.0, "stroke-opacity": 0,
+        });
+        this.fadeIn(ln, 320, 0.85);
+      }
+    });
+  }
+
+  beamFadeOut() {
+    if (!this.beam) return;
+    const start = performance.now();
+    const cur = Number(this.beam.getAttribute("stroke-opacity")) || 0.5;
+    const tick = () => {
+      const t = (performance.now() - start) / 700;
+      if (t >= 1) {
+        this.beam.setAttribute("stroke-opacity", "0");
+        return;
+      }
+      this.beam.setAttribute("stroke-opacity", String(cur * (1 - t)));
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  updateProgressArc(frac) {
+    const aStart = -Math.PI / 2;
+    const aEnd = aStart + frac * 2 * Math.PI;
+    const r = R.BOUND_OUT + 16;
+    if (frac <= 0) { this.arcPath.setAttribute("d", ""); return; }
+    if (frac >= 0.999) {
+      // full circle
+      const d = `M ${CX + r} ${CY} A ${r} ${r} 0 1 1 ${CX - r} ${CY} A ${r} ${r} 0 1 1 ${CX + r} ${CY}`;
+      this.arcPath.setAttribute("d", d);
+      return;
+    }
+    const [x1, y1] = polar(r, aStart);
+    const [x2, y2] = polar(r, aEnd);
+    const large = (aEnd - aStart) > Math.PI ? 1 : 0;
+    const d = `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+    this.arcPath.setAttribute("d", d);
+  }
+
+  populateReadingPanel() {
+    this.readingEl.innerHTML = "";
+    this.unitEls = [];
+    let lastSection = -1;
+    this.layout.sentences.forEach((s, i) => {
+      if (s.section_idx !== lastSection) {
+        const sec = this.layout.sections[s.section_idx];
+        const h = document.createElement("div");
+        h.className = "unit heading";
+        h.style.color = `hsl(${sec.hue} 65% 30%)`;
+        h.textContent = "#".repeat(sec.depth) + " " + sec.heading;
+        this.readingEl.appendChild(h);
+        lastSection = s.section_idx;
+      }
+      const el = document.createElement("div");
+      el.className = "unit";
+      el.textContent = s.text;
+      this.readingEl.appendChild(el);
+      this.unitEls.push(el);
+    });
+  }
+
+  updateStats(progress) {
+    const t = this.layout.totals;
+    const n = this.layout.sentences.length;
+    const cur = progress != null ? `${progress} / ${n} units · ${this.tokensSeen} / ${t.tokens} tokens` :
+      `${t.tokens} tokens · ${t.sections} sections · ${n} units`;
+    this.statsEl.innerHTML = `<b>${cur}</b><br>${t.imperatives} imperatives · ${t.bullets} bullets · ${t.refs} refs`;
+  }
+
+  // ----- SVG helpers -----
+  circle(parent, cx, cy, r, attrs) {
+    const el = document.createElementNS(SVG_NS, "circle");
+    el.setAttribute("cx", cx); el.setAttribute("cy", cy); el.setAttribute("r", r);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+    parent.appendChild(el);
+    return el;
+  }
+  line(parent, x1, y1, x2, y2, attrs) {
+    const el = document.createElementNS(SVG_NS, "line");
+    el.setAttribute("x1", x1); el.setAttribute("y1", y1);
+    el.setAttribute("x2", x2); el.setAttribute("y2", y2);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+    parent.appendChild(el);
+    return el;
+  }
+  arrow(parent, x1, y1, x2, y2, stroke, width, head, opacity) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-3) return null;
+    const angle = Math.atan2(dy, dx);
+    const back = Math.min(head * 0.6, length * 0.9);
+    const bx = x2 - back * Math.cos(angle);
+    const by = y2 - back * Math.sin(angle);
+    const g = document.createElementNS(SVG_NS, "g");
+    parent.appendChild(g);
+    const ln = document.createElementNS(SVG_NS, "line");
+    ln.setAttribute("x1", x1); ln.setAttribute("y1", y1);
+    ln.setAttribute("x2", bx); ln.setAttribute("y2", by);
+    ln.setAttribute("stroke", stroke);
+    ln.setAttribute("stroke-width", width);
+    ln.setAttribute("stroke-opacity", opacity);
+    ln.setAttribute("stroke-linecap", "round");
+    g.appendChild(ln);
+    const a1 = angle + Math.PI - 0.45;
+    const a2 = angle + Math.PI + 0.45;
+    const px1 = x2 + head * Math.cos(a1);
+    const py1 = y2 + head * Math.sin(a1);
+    const px2 = x2 + head * Math.cos(a2);
+    const py2 = y2 + head * Math.sin(a2);
+    const tri = document.createElementNS(SVG_NS, "polygon");
+    tri.setAttribute("points", `${x2},${y2} ${px1.toFixed(1)},${py1.toFixed(1)} ${px2.toFixed(1)},${py2.toFixed(1)}`);
+    tri.setAttribute("fill", stroke);
+    tri.setAttribute("fill-opacity", opacity);
+    g.appendChild(tri);
+    return g;
+  }
+
+  fadeIn(el, ms, target) {
+    const targetOp = target != null ? target : Number(el.getAttribute("stroke-opacity") || el.getAttribute("fill-opacity") || 1);
+    const isStroke = el.getAttribute("stroke") && el.tagName !== "circle";
+    const setOp = (v) => {
+      if (el.tagName === "circle" && el.getAttribute("fill") !== "none") {
+        el.setAttribute("fill-opacity", v);
+      }
+      if (el.getAttribute("stroke") && el.getAttribute("stroke") !== "none") {
+        el.setAttribute("stroke-opacity", v);
+      }
+      if (el.tagName === "g") {
+        el.querySelectorAll("[stroke]").forEach(c => c.setAttribute("stroke-opacity", v));
+        el.querySelectorAll("polygon").forEach(c => c.setAttribute("fill-opacity", v));
+      }
+    };
+    const start = performance.now();
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - start) / ms);
+      setOp(targetOp * t);
+      if (t < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  expandAndFade(el, fromR, toR, ms) {
+    const start = performance.now();
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - start) / ms);
+      el.setAttribute("r", fromR + (toR - fromR) * t);
+      el.setAttribute("stroke-opacity", (0.7 * (1 - t)).toFixed(2));
+      if (t < 1) requestAnimationFrame(tick);
+      else el.remove();
+    };
+    requestAnimationFrame(tick);
+  }
+
+  // ----- LLM hooks -----
+  resetThoughts() {
+    this.lastThoughtPos = null;
+    this.thoughtCount = 0;
+  }
+
+  addThought(data) {
+    if (!this.layout || !data || !data.pos_2d || !this.cloudScale) return;
+    const [px, py] = data.pos_2d;
+    // Honest placement: anchor each thought near the section it most resembles
+    // (top cosine similarity), at a radius proportional to confidence. This is
+    // more legible than the raw PCA-projected position, which collapses near
+    // the origin for short generated chunks (TF-IDF vectors of small text are
+    // tiny). The PCA value still drives a small offset so consecutive thoughts
+    // hitting the same section spread out instead of overlapping.
+    let dx, dy;
+    if (data.top_section >= 0 && data.top_score > 0.02 && this.layout.sections[data.top_section]) {
+      const sec = this.layout.sections[data.top_section];
+      const conf = Math.min(1, data.top_score * 5);
+      const r = 220 + conf * 280;  // 220 (low conf) → 500 (high conf), in viewBox units
+      const angleDrift = ((this.thoughtCount % 7) - 3) * 0.025;
+      const angle = sec.slotCentre + angleDrift;
+      dx = CX + r * Math.cos(angle);
+      dy = CY + r * Math.sin(angle);
+      // Slight PCA-derived offset for variety between same-section thoughts.
+      dx += py * this.cloudScale * 1.2;
+      dy += -px * this.cloudScale * 1.2;
+    } else {
+      // No clear section match — place from PCA projection, amplified to be
+      // visible outside the central seal.
+      dx = CX + px * this.cloudScale * 6;
+      dy = CY + py * this.cloudScale * 6;
+    }
+
+    // Gold-tinted to distinguish AI output from prompt (the prompt is hued by section angle).
+    const goldHue = 45;
+    const sectionHue =
+      data.top_section >= 0 && this.layout.sections[data.top_section]
+        ? this.layout.sections[data.top_section].hue
+        : goldHue;
+
+    // Halo expanding outward.
+    const halo = this.circle(this.layers.cloud, dx, dy, 6, {
+      fill: "none",
+      stroke: `hsl(${goldHue} 85% 55%)`,
+      "stroke-width": 1.6,
+      "stroke-opacity": 0.95,
+    });
+    this.expandAndFade(halo, 6, 36, 700);
+
+    // Core dot — gold, with glow filter.
+    const dot = this.circle(this.layers.cloud, dx, dy, 3.4, {
+      fill: `hsl(${goldHue} 95% 55%)`,
+      stroke: "#000",
+      "stroke-width": 0.5,
+      "fill-opacity": 0,
+      filter: "url(#thought-glow)",
+    });
+    this.fadeIn(dot, 280);
+
+    // Connect to last thought.
+    if (this.lastThoughtPos) {
+      const ln = this.line(
+        this.layers.sentencePath,
+        this.lastThoughtPos.x, this.lastThoughtPos.y, dx, dy,
+        {
+          stroke: `hsl(${goldHue} 75% 45%)`,
+          "stroke-width": 1.6,
+          "stroke-opacity": 0,
+          "stroke-linecap": "round",
+        }
+      );
+      this.fadeIn(ln, 350, 0.85);
+    } else {
+      // First thought: draw a faint arrow from the central seal outward to it.
+      const angle = Math.atan2(dy - CY, dx - CX);
+      const sx = CX + R.SEAL_OUT * Math.cos(angle);
+      const sy = CY + R.SEAL_OUT * Math.sin(angle);
+      const arr = this.arrow(
+        this.layers.sentencePath, sx, sy, dx, dy,
+        `hsl(${goldHue} 80% 45%)`, 1.4, 8, 0.85
+      );
+      this.fadeIn(arr, 400);
+    }
+    this.lastThoughtPos = { x: dx, y: dy };
+    this.thoughtCount += 1;
+
+    // Pulse the section being drawn from.
+    if (data.top_section >= 0 && this.sectionVertexEls[data.top_section]) {
+      this.pulseVertex(this.sectionVertexEls[data.top_section], data.top_score || 0);
+      const sec = this.layout.sections[data.top_section];
+      this.nowSection.innerHTML =
+        `<b style="color:hsl(${goldHue} 75% 35%)">⊙ thinking from</b> ` +
+        `<span style="color:hsl(${sec.hue} 65% 30%)">${escape(sec.heading)}</span>` +
+        ` <span class="mute">(${(data.top_score * 100).toFixed(0)}%)</span>`;
+    }
+  }
+
+  pulseVertex(el, intensity) {
+    // Read or initialize the canonical base radius. We must NOT use the
+    // current `r` because if a previous pulse is still running, `r` is
+    // mid-animation and using it would cause runaway growth on each call.
+    let baseR = Number(el.dataset.baseR);
+    if (!baseR || Number.isNaN(baseR)) {
+      baseR = Number(el.getAttribute("r")) || 6;
+      el.dataset.baseR = String(baseR);
+    }
+    // Single pulse at a time per vertex; subsequent calls during a pulse
+    // are dropped to keep the animation bounded.
+    if (el.dataset.pulsing === "1") return;
+    el.dataset.pulsing = "1";
+    const peak = baseR * (1.4 + Math.min(1, intensity) * 0.6);
+    const start = performance.now();
+    const tick = () => {
+      const t = (performance.now() - start) / 700;
+      if (t >= 1) {
+        el.setAttribute("r", baseR);
+        el.dataset.pulsing = "0";
+        return;
+      }
+      const phase = Math.sin(t * Math.PI);
+      el.setAttribute("r", baseR + (peak - baseR) * phase);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+}
+
+class LLM {
+  constructor(sigil) {
+    this.sigil = sigil;
+    this.generator = null;
+    this.modelId = null;
+    this.aborted = false;
+
+    this.modelPicker = document.getElementById("model-picker");
+    this.customInput = document.getElementById("custom-model");
+    this.loadBtn = document.getElementById("load-model");
+    this.modelStatus = document.getElementById("model-status");
+    this.queryEl = document.getElementById("query");
+    this.runBtn = document.getElementById("run-llm");
+    this.stopBtn = document.getElementById("stop-llm");
+    this.maxTokens = document.getElementById("max-tokens");
+    this.outputEl = document.getElementById("thought-output");
+
+    this.modelPicker.addEventListener("change", () => {
+      this.customInput.style.display =
+        this.modelPicker.value === "custom" ? "" : "none";
+    });
+    this.loadBtn.addEventListener("click", () => this.loadModel());
+    this.runBtn.addEventListener("click", () => this.run());
+    this.stopBtn.addEventListener("click", () => this.stop());
+  }
+
+  selectedId() {
+    if (this.modelPicker.value === "custom") {
+      return (this.customInput.value || "").trim();
+    }
+    return this.modelPicker.value;
+  }
+
+  async loadModel() {
+    const id = this.selectedId();
+    if (!id) {
+      this.modelStatus.textContent = "(enter a model id)";
+      return;
+    }
+    this.loadBtn.disabled = true;
+    this.runBtn.disabled = true;
+
+    const forceWasm = document.getElementById("force-wasm")?.checked;
+    const dtypeChoice = document.getElementById("dtype-choice")?.value || "auto";
+
+    // Use a SHORT chain. Each failed attempt re-downloads a different .onnx_data
+    // file (~hundreds of MB), so trying many combinations wastes bandwidth.
+    let attempts;
+    if (dtypeChoice !== "auto") {
+      attempts = forceWasm
+        ? [{ device: "wasm", dtype: dtypeChoice }]
+        : [{ device: "webgpu", dtype: dtypeChoice }, { device: "wasm", dtype: dtypeChoice }];
+    } else if (forceWasm) {
+      attempts = [{ device: "wasm", dtype: "q8" }];   // q8 is the most reliable WASM dtype
+    } else {
+      attempts = [
+        { device: "webgpu", dtype: "q4" },
+        { device: "wasm", dtype: "q8" },
+      ];
+    }
+
+    const startedAt = Date.now();
+
+    let downloadedFiles = new Set();
+    let downloadingByteCounts = new Map();
+    let allDownloadsDone = false;
+
+    const tryLoad = async ({ device, dtype }) => {
+      return await pipeline("text-generation", id, {
+        device,
+        dtype,
+        progress_callback: (p) => {
+          if (p.status === "progress" && p.file) {
+            // HF's CDN doesn't return Content-Length, so p.progress is unreliable
+            // (often >100%). Display only actual bytes downloaded + elapsed.
+            downloadingByteCounts.set(p.file, p.loaded || 0);
+            const totalMB = [...downloadingByteCounts.values()]
+              .reduce((a, b) => a + b, 0) / 1e6;
+            this.modelStatus.textContent =
+              `${device}/${dtype} · downloading ${p.file} · ${totalMB.toFixed(1)}MB total / ${fmtElapsed()}`;
+          } else if (p.status === "initiate" && p.file) {
+            this.modelStatus.textContent =
+              `${device}/${dtype} · fetching ${p.file}...`;
+          } else if (p.status === "done" && p.file) {
+            downloadedFiles.add(p.file);
+            const totalMB = [...downloadingByteCounts.values()]
+              .reduce((a, b) => a + b, 0) / 1e6;
+            this.modelStatus.textContent =
+              `${device}/${dtype} · ${downloadedFiles.size} files done · ${totalMB.toFixed(1)}MB · instantiating in browser (this may take 1-3 min for large models)...`;
+            allDownloadsDone = true;
+          } else if (p.status === "ready") {
+            // model is fully ready
+          } else if (p.status) {
+            this.modelStatus.textContent =
+              `${device}/${dtype} · ${p.status}${p.file ? ": " + p.file : ""}`;
+          }
+        },
+      });
+    };
+
+    const fmtElapsed = () => `${((Date.now() - startedAt) / 1000).toFixed(0)}s`;
+
+    let lastErr = null;
+    for (const opts of attempts) {
+      this.modelStatus.textContent =
+        `loading ${opts.device}/${opts.dtype}... (first time downloads ~300MB; cached after)`;
+      try {
+        this.generator = await tryLoad(opts);
+        const took = ((Date.now() - startedAt) / 1000).toFixed(0);
+        this.modelStatus.textContent =
+          `loaded: ${id} (${opts.device}/${opts.dtype}, ${took}s)`;
+        this.modelId = id;
+        this.runBtn.disabled = false;
+        this.loadBtn.disabled = false;
+        return;
+      } catch (e) {
+        lastErr = e;
+        this.modelStatus.textContent =
+          `${opts.device}/${opts.dtype} failed: ${(e.message || e).slice(0, 200)}`;
+      }
+    }
+    this.modelStatus.textContent =
+      `all attempts failed. last: ${(lastErr && lastErr.message) || lastErr}`;
+    this.loadBtn.disabled = false;
+  }
+
+  async run() {
+    // Preconditions — make any failure visible in BOTH places.
+    const showError = (msg) => {
+      this.modelStatus.textContent = msg;
+      this.outputEl.textContent = "[" + msg + "]";
+      this.outputEl.style.color = "#a33";
+    };
+    if (!this.generator) { showError("load a model first"); return; }
+    const sysPrompt = this.sigil.input.value;
+    let query = this.queryEl.value.trim();
+    if (!query) { showError("enter a query first"); return; }
+    if (!this.sigil.layout || this.sigil._lastPreparedText !== sysPrompt) {
+      this.modelStatus.textContent = "auto-conjuring sigil for current prompt...";
+      const ok = await this.sigil.prepareLayout();
+      if (!ok) {
+        showError("could not prepare sigil layout — see stats panel");
+        return;
+      }
+    }
+    // Inject interpretation of any human-drawn strokes into the user query.
+    if (window.sketcher) {
+      const annot = window.sketcher.toQueryAnnotation();
+      if (annot) {
+        query = query + annot;
+        this.modelStatus.textContent = "drawn intent → injected into query";
+      }
+    }
+
+    const messages = [
+      { role: "system", content: sysPrompt },
+      { role: "user", content: query },
+    ];
+
+    this.outputEl.style.color = "#333";
+    this.outputEl.textContent =
+      "(thinking — sigil keeps rotating via CSS even while WASM holds the main thread. " +
+      "Trajectory will be drawn after generation finishes.)";
+    this.runBtn.disabled = true;
+    this.stopBtn.disabled = false;
+    this.aborted = false;
+    this.sigil.resetThoughts();
+    document.body.classList.add("thinking");
+    this.modelStatus.textContent = "running inference (sigil shows live thinking animation)...";
+
+    const startedRun = Date.now();
+    let buffer = "";
+
+    const streamer = new TextStreamer(this.generator.tokenizer, {
+      skip_prompt: true,
+      skip_special_tokens: true,
+      callback_function: (text) => {
+        if (this.aborted) return;
+        buffer += text;
+        // The DOM update may not paint until WASM yields, but at least
+        // when the browser does paint, the latest text is visible.
+        this.outputEl.textContent = buffer;
+      },
+    });
+
+    try {
+      await this.generator(messages, {
+        max_new_tokens: Number(this.maxTokens.value) || 200,
+        do_sample: false,
+        streamer,
+      });
+      const genSecs = ((Date.now() - startedRun) / 1000).toFixed(1);
+      this.modelStatus.textContent =
+        `generated ${buffer.length} chars in ${genSecs}s · drawing trajectory...`;
+      if (buffer.length === 0) {
+        this.outputEl.textContent =
+          "[no tokens generated — model may not support this chat template, " +
+          "or generation stopped immediately. Check console.]";
+        this.outputEl.style.color = "#a33";
+      } else {
+        const projections = await this.replayProjections(buffer);
+        const total = ((Date.now() - startedRun) / 1000).toFixed(1);
+        this.modelStatus.textContent =
+          `done · ${buffer.length} chars · ${projections} projections · ${total}s total ` +
+          `(${genSecs}s gen + ${(Number(total) - Number(genSecs)).toFixed(1)}s replay)`;
+      }
+    } catch (e) {
+      console.error("inference error:", e);
+      this.outputEl.textContent =
+        `[error: ${e.message || e}]\n\n${(e.stack || "").slice(0, 500)}`;
+      this.outputEl.style.color = "#a33";
+      this.modelStatus.textContent = `inference failed: ${(e.message || e).slice(0, 120)}`;
+    } finally {
+      document.body.classList.remove("thinking");
+      this.runBtn.disabled = false;
+      this.stopBtn.disabled = true;
+    }
+  }
+
+  // Replay the generated buffer as a sequence of projections. Each window
+  // becomes a thought dot on the sigil. Runs AFTER generation so the main
+  // thread is free for fetch() and DOM updates.
+  async replayProjections(text) {
+    const windowSize = 60;
+    const stride = 30;
+    let count = 0;
+    const project = async (chunk) => {
+      try {
+        const resp = await fetch("/api/project", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: chunk }),
+        });
+        const data = await resp.json();
+        if (data && !data.error) {
+          this.sigil.addThought(data);
+          count += 1;
+        }
+      } catch (e) {
+        console.warn("project failed:", e);
+      }
+    };
+    for (let i = 0; i < text.length && !this.aborted; i += stride) {
+      const end = Math.min(i + windowSize, text.length);
+      const window = text.slice(i, end);
+      if (window.trim().length < 4) continue;
+      await project(window);
+      this.modelStatus.textContent =
+        `drawing thought ${count} (${end}/${text.length} chars)`;
+      await new Promise((r) => setTimeout(r, 220));
+      if (end >= text.length) break;
+    }
+    return count;
+  }
+
+  stop() {
+    this.aborted = true;
+    // transformers.js streaming has no clean stop hook in v3 from outside;
+    // we drop further callbacks and let the generation fall off internally.
+    this.runBtn.disabled = false;
+    this.stopBtn.disabled = true;
+    this.modelStatus.textContent = "stopped (output continues internally)";
+  }
+}
+
+function polar(r, theta) {
+  return [CX + r * Math.cos(theta), CY + r * Math.sin(theta)];
+}
+
+function knnEdges(sim, k, minSim) {
+  const n = sim.length;
+  const edges = new Map();
+  for (let i = 0; i < n; i++) {
+    const row = sim[i].slice();
+    row[i] = -Infinity;
+    const order = row.map((v, j) => [v, j]).sort((a, b) => b[0] - a[0]);
+    let kept = 0;
+    for (const [v, j] of order) {
+      if (kept >= k || v < minSim) break;
+      const a = i < j ? i : j;
+      const b = i < j ? j : i;
+      const key = `${a},${b}`;
+      const prev = edges.get(key);
+      if (prev == null || v > prev[2]) edges.set(key, [a, b, v]);
+      kept++;
+    }
+  }
+  return [...edges.values()];
+}
+
+function escape(s) {
+  return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ---------------------------------------------------------------------------
+// SECTION_TYPES — the click-only vocabulary. Each type has a glyph rendered
+// on the sigil, a colour, a shape, and 2-3 preset bodies that the user
+// cycles by clicking an existing vertex. No free-text needed.
+// ---------------------------------------------------------------------------
+const SECTION_TYPES = {
+  persona: {
+    label: "persona", glyph: "◉", shape: "disc", color: "hsl(280 55% 45%)",
+    presets: [
+      { name: "research engineer",
+        body: "You are a careful research engineer. Speak plainly. Prefer evidence over rhetoric and call out your uncertainty." },
+      { name: "creative writer",
+        body: "You are a creative writing partner. Surprise the reader without losing clarity." },
+      { name: "patient tutor",
+        body: "You are a patient tutor. Meet the learner where they are and check understanding before moving on." },
+    ],
+  },
+  reasoning: {
+    label: "reasoning", glyph: "△", shape: "tri", color: "hsl(220 55% 45%)",
+    presets: [
+      { name: "decompose",
+        body: "Break problems into the smallest verifiable pieces, solve each, then compose. Show working briefly." },
+      { name: "counterfactual",
+        body: "For non-trivial decisions, sketch one alternative you considered and explain why you rejected it." },
+      { name: "calibrate",
+        body: "Assign confidence in words, not percentages. Say \"I don't know\" when sources are absent." },
+    ],
+  },
+  tools: {
+    label: "tools", glyph: "⊞", shape: "square", color: "hsl(150 45% 35%)",
+    presets: [
+      { name: "search + fetch",
+        body: "You can call search(query) and fetch(url). Cite the URLs you actually used. Do not fabricate citations." },
+      { name: "code execution",
+        body: "You can run Python in a sandbox. Paste the code you ran into your reply for the user to audit." },
+      { name: "read-only sql",
+        body: "You can run sql(query) on the analytics warehouse. Limit results to 10,000 rows. No DDL or DML." },
+    ],
+  },
+  output: {
+    label: "output", glyph: "◇", shape: "diamond", color: "hsl(45 65% 40%)",
+    presets: [
+      { name: "concise",
+        body: "Reply in two to three sentences when possible. Skip preamble." },
+      { name: "structured",
+        body: "Open with a one-line summary, then a structured body. Use markdown tables for ≥3 items × ≥2 dimensions." },
+      { name: "long-form",
+        body: "For documents over 800 words, open with a numbered table of contents and number the sections." },
+    ],
+  },
+  style: {
+    label: "style", glyph: "✦", shape: "star", color: "hsl(330 55% 45%)",
+    presets: [
+      { name: "plain",
+        body: "Active voice. No marketing register. No emoji. No hedging unless the evidence is genuinely uncertain." },
+      { name: "formal",
+        body: "Formal register; full sentences; precise terminology; no slang." },
+      { name: "playful",
+        body: "Conversational and warm. Wit allowed when it lands. Never at the user's expense." },
+    ],
+  },
+  limits: {
+    label: "limits", glyph: "▽", shape: "tri-down", color: "hsl(0 60% 42%)",
+    presets: [
+      { name: "safety basics",
+        body: "NEVER produce instructions for weapons capable of mass casualties. NEVER help target an individual for harassment. Decline politely and offer the nearest legitimate adjacent task." },
+      { name: "no PII",
+        body: "Never request, store, or echo personally identifying information. Mask any PII the user pastes." },
+      { name: "domain only",
+        body: "Refuse questions outside the agreed scope. Suggest where the user might ask instead." },
+    ],
+  },
+  memory: {
+    label: "memory", glyph: "○", shape: "ring", color: "hsl(190 50% 40%)",
+    presets: [
+      { name: "long-term",
+        body: "Save stable user preferences (role, project, tools). Re-derive transient context each session." },
+      { name: "session-only",
+        body: "Hold facts only for the current session; forget on disconnect." },
+      { name: "hygiene",
+        body: "Periodically review saved memories for staleness. If memory contradicts current evidence, prefer the evidence." },
+    ],
+  },
+  examples: {
+    label: "examples", glyph: "⌬", shape: "hex", color: "hsl(110 40% 38%)",
+    presets: [
+      { name: "Q&A pair",
+        body: "Example:\nQ: How do I export the table?\nA: Use the toolbar's Export button; CSV is the default." },
+      { name: "before / after",
+        body: "Before:  TODO write\nAfter:   The migration ran in 3.2s with no row mismatch." },
+      { name: "dialogue",
+        body: "User: ...\nAssistant: ..." },
+    ],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Sketcher — the human side of the magic-circle protocol.
+//
+// Vocabulary (initial v0):
+//   ◯ enclose (closed stroke around a section)  → emphasize that section
+//   ─ connect (line passing near 2+ section vertices) → bridge them
+//   ╳ cross  (two crossing strokes near one section) → suppress that section
+//   • mark   (short stroke near one section)     → reference it
+//
+// All matching is in viewBox-coords; we pause rotation while drawing so the
+// visual coords equal the logical coords. Strokes are added inside the
+// rotation group, so once drawing finishes they rotate with the sections.
+// ---------------------------------------------------------------------------
+class Sketcher {
+  constructor(sigil) {
+    this.sigil = sigil;
+    this.strokes = [];          // [{ points: [[x,y]...] }]
+    this.current = null;        // active stroke being drawn
+    this.currentPathEl = null;  // SVG path for active stroke
+    this.drawing = false;       // mode flag
+
+    this.toggleBtn = document.getElementById("draw-toggle");
+    this.clearBtn = document.getElementById("draw-clear");
+    this.helpBtn = document.getElementById("draw-help");
+    this.scaffoldBtn = document.getElementById("draw-scaffold");
+    this.blankBtn = document.getElementById("draw-blank");
+    this.hintEl = document.getElementById("interpret-hint");
+
+    this.toggleBtn.addEventListener("click", () => this.toggleMode());
+    this.clearBtn.addEventListener("click", () => this.clear());
+    this.helpBtn.addEventListener("click", () => this.showHelp());
+    this.scaffoldBtn.addEventListener("click", () => this.scaffoldPrompt());
+    this.blankBtn.addEventListener("click", () => this.blankCanvas());
+
+    // Compose tool buttons (click-based composition)
+    this.composeMode = "off"; // place | bridge | delete | off
+    this.composedSections = []; // [{x, y, label}]
+    this.composedBridges = []; // [{a, b}]
+    this.composeSelectedIdx = null;
+    this.toolButtons = document.querySelectorAll(".draw-controls [data-tool]");
+    this.toolButtons.forEach((btn) => {
+      btn.addEventListener("click", () => this.setComposeMode(btn.dataset.tool));
+    });
+
+    sigil.svg.addEventListener("pointerdown", (e) => this.onDown(e));
+    sigil.svg.addEventListener("pointermove", (e) => this.onMove(e));
+    sigil.svg.addEventListener("pointerup", (e) => this.onUp(e));
+    sigil.svg.addEventListener("pointercancel", (e) => this.onUp(e));
+    sigil.svg.addEventListener("pointerleave", (e) => this.onUp(e));
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        if (this.composeSelectedIdx != null) {
+          this.composeSelectedIdx = null;
+          this.renderComposed();
+          this.updateComposeHint();
+        } else if (this.composeMode !== "off") {
+          this.setComposeMode("off");
+        }
+      }
+    });
+  }
+
+  setComposeMode(mode) {
+    this.composeMode = mode;
+    this.composeSelectedIdx = null;
+    this.toolButtons.forEach((b) =>
+      b.classList.toggle("active", b.dataset.tool === mode)
+    );
+    if (mode !== "off") {
+      if (this.sigil.rotationGroup) {
+        this.sigil.rotationGroup.style.animationPlayState = "paused";
+      }
+      this.sigil.svg.style.cursor =
+        mode === "delete" ? "not-allowed" : "crosshair";
+      if (this.drawing) this.toggleMode();
+    } else {
+      if (this.sigil.rotationGroup) {
+        this.sigil.rotationGroup.style.animationPlayState = "running";
+      }
+      this.sigil.svg.style.cursor = "default";
+    }
+    this.updateComposeHint();
+  }
+
+  parsePlace(mode) {
+    // mode is "place:persona" or just "place" (legacy). Returns the type or null.
+    if (!mode || !mode.startsWith("place")) return null;
+    const parts = mode.split(":");
+    return parts[1] || "persona";
+  }
+
+  updateComposeHint() {
+    if (this.composeMode === "off") return;
+    const placeType = this.parsePlace(this.composeMode);
+    let body;
+    if (placeType) {
+      const t = SECTION_TYPES[placeType];
+      body = `<b style="color:${t.color}">${t.glyph} ${t.label}</b> — click empty space to place; click an existing ${t.label} vertex to cycle preset`;
+    } else if (this.composeMode === "bridge") {
+      body =
+        this.composeSelectedIdx == null
+          ? "click a vertex to start a bridge"
+          : "click another vertex to complete bridge (Esc to cancel)";
+    } else if (this.composeMode === "delete") {
+      body = "click a vertex to delete it";
+    } else {
+      body = "";
+    }
+    this.hintEl.innerHTML =
+      body + ` <span class="mute">· ${this.composedSections.length} placed, ${this.composedBridges.length} bridge(s)</span>`;
+  }
+
+  ensureLayersForCompose() {
+    // If layers don't exist (no conjure yet), build the bare structure.
+    if (!this.sigil.layers || !this.sigil.layers.userStrokes) {
+      this.sigil.resetSvg();
+    }
+  }
+
+  findComposedAt(x, y, threshold = 28) {
+    let best = -1, bestD = threshold;
+    for (let i = 0; i < this.composedSections.length; i++) {
+      const s = this.composedSections[i];
+      const d = Math.hypot(s.x - x, s.y - y);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best === -1 ? null : best;
+  }
+
+  handleComposeClick(x, y) {
+    this.ensureLayersForCompose();
+    const placeType = this.parsePlace(this.composeMode);
+    if (placeType) {
+      const hit = this.findComposedAt(x, y);
+      if (hit != null) {
+        // Click on existing vertex while a place tool is active.
+        const sec = this.composedSections[hit];
+        if (sec.type === placeType) {
+          // Cycle preset within same type
+          const t = SECTION_TYPES[placeType];
+          sec.presetIndex = (sec.presetIndex + 1) % t.presets.length;
+        } else {
+          // Re-type the vertex (preserve position)
+          sec.type = placeType;
+          sec.presetIndex = 0;
+        }
+      } else {
+        // New vertex — snap to rim
+        const dx = x - CX, dy = y - CY;
+        const ang = Math.atan2(dy, dx);
+        const sx = CX + R.VERTEX * Math.cos(ang);
+        const sy = CY + R.VERTEX * Math.sin(ang);
+        this.composedSections.push({
+          x: sx, y: sy, angle: ang,
+          type: placeType,
+          presetIndex: 0,
+        });
+      }
+      this.renderComposed();
+      this.updateComposeHint();
+      return;
+    }
+    if (this.composeMode === "bridge") {
+      const hit = this.findComposedAt(x, y);
+      if (hit == null) return;
+      if (this.composeSelectedIdx == null) {
+        this.composeSelectedIdx = hit;
+      } else if (this.composeSelectedIdx !== hit) {
+        this.composedBridges.push({
+          a: this.composeSelectedIdx, b: hit,
+        });
+        this.composeSelectedIdx = null;
+      } else {
+        this.composeSelectedIdx = null; // deselect
+      }
+      this.renderComposed();
+      this.updateComposeHint();
+      return;
+    }
+    if (this.composeMode === "delete") {
+      const hit = this.findComposedAt(x, y);
+      if (hit == null) return;
+      this.composedSections.splice(hit, 1);
+      this.composedBridges = this.composedBridges
+        .filter((b) => b.a !== hit && b.b !== hit)
+        .map((b) => ({
+          a: b.a > hit ? b.a - 1 : b.a,
+          b: b.b > hit ? b.b - 1 : b.b,
+        }));
+      this.renderComposed();
+      this.updateComposeHint();
+    }
+  }
+
+  renderComposed() {
+    const layer = this.sigil.layers.userStrokes;
+    [...layer.querySelectorAll("[data-composed]")].forEach((el) => el.remove());
+    // Bridges
+    for (const br of this.composedBridges) {
+      const a = this.composedSections[br.a];
+      const b = this.composedSections[br.b];
+      if (!a || !b) continue;
+      const ln = document.createElementNS(SVG_NS, "line");
+      ln.setAttribute("x1", a.x); ln.setAttribute("y1", a.y);
+      ln.setAttribute("x2", b.x); ln.setAttribute("y2", b.y);
+      ln.setAttribute("stroke", "#1a1a1a");
+      ln.setAttribute("stroke-width", "1.4");
+      ln.setAttribute("stroke-opacity", "0.55");
+      ln.setAttribute("data-composed", "bridge");
+      layer.appendChild(ln);
+    }
+    // Vertices: shape per type, colour per type
+    this.composedSections.forEach((s, i) => {
+      const t = SECTION_TYPES[s.type] || SECTION_TYPES.persona;
+      const selected = i === this.composeSelectedIdx;
+      const r = selected ? 14 : 11;
+      const shape = this._makeShapeEl(t.shape, s.x, s.y, r, t.color, selected);
+      shape.setAttribute("data-composed", "vertex");
+      layer.appendChild(shape);
+      // Glyph at the centre of the shape (Unicode mark)
+      const g = document.createElementNS(SVG_NS, "text");
+      g.setAttribute("x", s.x);
+      g.setAttribute("y", s.y + 5);
+      g.setAttribute("text-anchor", "middle");
+      g.setAttribute("font-size", "13");
+      g.setAttribute("fill", "#fff");
+      g.setAttribute("data-composed", "glyph");
+      g.textContent = t.glyph;
+      layer.appendChild(g);
+      // Outer label = type word (single short word)
+      const labelR = R.VERTEX + 36;
+      const lx = CX + labelR * Math.cos(s.angle);
+      const ly = CY + labelR * Math.sin(s.angle);
+      let rot = (s.angle * 180) / Math.PI + 90;
+      if (rot > 90 && rot < 270) rot -= 180;
+      const lab = document.createElementNS(SVG_NS, "text");
+      lab.setAttribute("x", lx);
+      lab.setAttribute("y", ly);
+      lab.setAttribute("text-anchor", "middle");
+      lab.setAttribute("font-family", "ui-monospace, Menlo, Consolas, monospace");
+      lab.setAttribute("font-size", "11");
+      lab.setAttribute("fill", t.color);
+      lab.setAttribute("transform", `rotate(${rot} ${lx} ${ly})`);
+      lab.setAttribute("data-composed", "label");
+      lab.textContent = `${t.label} · ${t.presets[s.presetIndex].name}`;
+      layer.appendChild(lab);
+    });
+  }
+
+  _makeShapeEl(shape, cx, cy, r, color, selected) {
+    const stroke = selected ? "hsl(45 90% 50%)" : "#1a1a1a";
+    const sw = selected ? 3 : 1.2;
+    const points = (n, rot = 0) => {
+      const ps = [];
+      for (let k = 0; k < n; k++) {
+        const a = rot + (k * 2 * Math.PI) / n;
+        ps.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+      }
+      return ps.map((p) => p.join(",")).join(" ");
+    };
+    const star = () => {
+      const ps = [];
+      for (let k = 0; k < 10; k++) {
+        const rad = k % 2 === 0 ? r : r * 0.45;
+        const a = -Math.PI / 2 + (k * Math.PI) / 5;
+        ps.push([cx + rad * Math.cos(a), cy + rad * Math.sin(a)]);
+      }
+      return ps.map((p) => p.join(",")).join(" ");
+    };
+    let el;
+    switch (shape) {
+      case "tri":
+        el = document.createElementNS(SVG_NS, "polygon");
+        el.setAttribute("points", points(3, -Math.PI / 2));
+        break;
+      case "tri-down":
+        el = document.createElementNS(SVG_NS, "polygon");
+        el.setAttribute("points", points(3, Math.PI / 2));
+        break;
+      case "square":
+        el = document.createElementNS(SVG_NS, "polygon");
+        el.setAttribute("points", points(4, Math.PI / 4));
+        break;
+      case "diamond":
+        el = document.createElementNS(SVG_NS, "polygon");
+        el.setAttribute("points", points(4, 0));
+        break;
+      case "star":
+        el = document.createElementNS(SVG_NS, "polygon");
+        el.setAttribute("points", star());
+        break;
+      case "hex":
+        el = document.createElementNS(SVG_NS, "polygon");
+        el.setAttribute("points", points(6, 0));
+        break;
+      case "ring":
+        el = document.createElementNS(SVG_NS, "circle");
+        el.setAttribute("cx", cx);
+        el.setAttribute("cy", cy);
+        el.setAttribute("r", r);
+        el.setAttribute("fill", "none");
+        el.setAttribute("stroke", color);
+        el.setAttribute("stroke-width", "3");
+        return el;
+      case "disc":
+      default:
+        el = document.createElementNS(SVG_NS, "circle");
+        el.setAttribute("cx", cx);
+        el.setAttribute("cy", cy);
+        el.setAttribute("r", r);
+        break;
+    }
+    el.setAttribute("fill", color);
+    el.setAttribute("stroke", stroke);
+    el.setAttribute("stroke-width", sw);
+    return el;
+  }
+
+  toggleMode() {
+    this.drawing = !this.drawing;
+    document.body.classList.toggle("drawing", this.drawing);
+    this.toggleBtn.classList.toggle("active", this.drawing);
+    this.toggleBtn.textContent = this.drawing ? "✓ done drawing" : "✎ draw";
+    if (this.sigil.rotationGroup) {
+      // Pause while drawing so screen coords == logical coords (and you can
+      // hit a moving target accurately).
+      this.sigil.rotationGroup.style.animationPlayState =
+        this.drawing ? "paused" : "running";
+    }
+    if (!this.drawing) this.updateHint();
+  }
+
+  clear() {
+    this.strokes = [];
+    this.composedSections = [];
+    this.composedBridges = [];
+    this.composeSelectedIdx = null;
+    if (this.sigil.layers && this.sigil.layers.userStrokes) {
+      const l = this.sigil.layers.userStrokes;
+      while (l.firstChild) l.removeChild(l.firstChild);
+    }
+    document.querySelectorAll(".affected-vertex").forEach((el) => {
+      el.classList.remove("affected-vertex");
+    });
+    this.updateHint();
+  }
+
+  showHelp() {
+    this.hintEl.innerHTML =
+      "<b>vocabulary</b>: " +
+      "<b>◯</b> enclose section = emphasize · " +
+      "<b>─</b> line through 2+ sections = bridge · " +
+      "<b>╳</b> two crossing strokes on a section = suppress · " +
+      "<b>•</b> short mark near a section = reference";
+  }
+
+  toLocal(e) {
+    const rect = this.sigil.svg.getBoundingClientRect();
+    return [
+      ((e.clientX - rect.left) / rect.width) * SVG_SIZE,
+      ((e.clientY - rect.top) / rect.height) * SVG_SIZE,
+    ];
+  }
+
+  onDown(e) {
+    // Compose-mode click takes precedence over freehand draw.
+    if (this.composeMode && this.composeMode !== "off") {
+      e.preventDefault();
+      const [x, y] = this.toLocal(e);
+      this.handleComposeClick(x, y);
+      return;
+    }
+    if (!this.drawing) return;
+    e.preventDefault();
+    this.sigil.svg.setPointerCapture(e.pointerId);
+    const [x, y] = this.toLocal(e);
+    this.current = { points: [[x, y]] };
+    const p = document.createElementNS(SVG_NS, "path");
+    p.setAttribute("fill", "none");
+    p.setAttribute("stroke", "#1a1a1a");
+    p.setAttribute("stroke-width", "3.5");
+    p.setAttribute("stroke-linecap", "round");
+    p.setAttribute("stroke-linejoin", "round");
+    p.setAttribute("stroke-opacity", "0.85");
+    p.setAttribute("d", `M ${x.toFixed(1)} ${y.toFixed(1)}`);
+    this.sigil.layers.userStrokes.appendChild(p);
+    this.currentPathEl = p;
+  }
+
+  onMove(e) {
+    if (!this.drawing || !this.current) return;
+    const [x, y] = this.toLocal(e);
+    const last = this.current.points[this.current.points.length - 1];
+    if (Math.hypot(x - last[0], y - last[1]) < 4) return;
+    this.current.points.push([x, y]);
+    const d = this.currentPathEl.getAttribute("d") + ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+    this.currentPathEl.setAttribute("d", d);
+  }
+
+  onUp(e) {
+    if (!this.current) return;
+    if (this.current.points.length >= 2) {
+      this.strokes.push(this.current);
+      this.updateHint();
+    } else if (this.currentPathEl) {
+      this.currentPathEl.remove();
+    }
+    this.current = null;
+    this.currentPathEl = null;
+  }
+
+  // -- classification -------------------------------------------------------
+  classifyAll() {
+    return this.strokes.map((s) => this.classifyOne(s));
+  }
+
+  classifyOne(stroke) {
+    const pts = stroke.points;
+    if (pts.length < 2) return { type: "noise", sections: [], closed: false };
+
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    const w = Math.max(...xs) - Math.min(...xs);
+    const h = Math.max(...ys) - Math.min(...ys);
+    const diag = Math.hypot(w, h);
+
+    let pathLen = 0;
+    for (let i = 1; i < pts.length; i++) {
+      pathLen += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    }
+    const seDist = Math.hypot(
+      pts[0][0] - pts[pts.length - 1][0],
+      pts[0][1] - pts[pts.length - 1][1]
+    );
+    const closed = diag > 30 && seDist < diag * 0.35 && pathLen > diag * 1.7;
+
+    const sections = (this.sigil.layout && this.sigil.layout.sections) || [];
+    const affected = [];
+    for (let i = 0; i < sections.length; i++) {
+      const sec = sections[i];
+      const sx = sec.vx, sy = sec.vy;
+      if (closed) {
+        if (this.pointInPolygon([sx, sy], pts)) affected.push(i);
+      } else {
+        const d = this.distToPath([sx, sy], pts);
+        if (d < 50) affected.push(i);
+      }
+    }
+
+    let type;
+    if (closed) type = affected.length > 0 ? "enclose" : "free-shape";
+    else if (affected.length >= 2) type = "connect";
+    else if (affected.length === 1) type = "mark";
+    else type = "stroke";
+    return { type, sections: affected, closed, points: pts.length };
+  }
+
+  // Detect cross marks: two distinct strokes that intersect within a small
+  // radius of a section vertex → suppress that section.
+  findCrossSuppressions(annotations) {
+    const sections = this.sigil.layout.sections;
+    const suppressions = new Set();
+    for (let i = 0; i < this.strokes.length; i++) {
+      for (let j = i + 1; j < this.strokes.length; j++) {
+        const ip = this.intersectStrokes(this.strokes[i], this.strokes[j]);
+        if (!ip) continue;
+        for (let s = 0; s < sections.length; s++) {
+          const sec = sections[s];
+          if (Math.hypot(sec.vx - ip[0], sec.vy - ip[1]) < 60) {
+            suppressions.add(s);
+          }
+        }
+      }
+    }
+    return suppressions;
+  }
+
+  intersectStrokes(a, b) {
+    // Coarse test: do bounding boxes overlap and any segment-pair intersect?
+    for (let i = 1; i < a.points.length; i++) {
+      const A = a.points[i - 1], B = a.points[i];
+      for (let j = 1; j < b.points.length; j++) {
+        const C = b.points[j - 1], D = b.points[j];
+        const ip = this.segIntersect(A, B, C, D);
+        if (ip) return ip;
+      }
+    }
+    return null;
+  }
+  segIntersect([x1, y1], [x2, y2], [x3, y3], [x4, y4]) {
+    const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+    if (Math.abs(d) < 1e-9) return null;
+    const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+    const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+    if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+    return [x1 + t * (x2 - x1), y1 + t * (y2 - y1)];
+  }
+
+  pointInPolygon([x, y], polygon) {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const [xi, yi] = polygon[i];
+      const [xj, yj] = polygon[j];
+      if ((yi > y) !== (yj > y) &&
+          x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-9) + xi) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  distToPath([x, y], pts) {
+    let m = Infinity;
+    for (let i = 1; i < pts.length; i++) {
+      const d = this.distSeg([x, y], pts[i - 1], pts[i]);
+      if (d < m) m = d;
+    }
+    return m;
+  }
+  distSeg([px, py], [x1, y1], [x2, y2]) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const L = dx * dx + dy * dy;
+    if (L === 0) return Math.hypot(px - x1, py - y1);
+    let t = ((px - x1) * dx + (py - y1) * dy) / L;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  }
+
+  // Build a structured interpretation: { emphasize: Set<idx>, suppress, bridge }
+  interpret() {
+    const annotations = this.classifyAll();
+    const emphasize = new Set();
+    const suppress = this.findCrossSuppressions(annotations);
+    const bridges = [];
+    for (const a of annotations) {
+      if (a.type === "enclose" || a.type === "mark") {
+        for (const s of a.sections) {
+          if (!suppress.has(s)) emphasize.add(s);
+        }
+      } else if (a.type === "connect") {
+        bridges.push(a.sections);
+        for (const s of a.sections) {
+          if (!suppress.has(s)) emphasize.add(s);
+        }
+      }
+    }
+    // Cross marks override emphasis
+    for (const s of suppress) emphasize.delete(s);
+    return { emphasize, suppress, bridges, annotations };
+  }
+
+  // --- UI feedback --------------------------------------------------------
+  updateHint() {
+    if (!this.sigil.layout || this.strokes.length === 0) {
+      this.hintEl.textContent = "";
+      this.markAffected(new Set(), new Set());
+      return;
+    }
+    const r = this.interpret();
+    const sections = this.sigil.layout.sections;
+    const name = (i) => sections[i] ? sections[i].heading : `#${i}`;
+    const parts = [];
+    if (r.emphasize.size > 0) {
+      parts.push(`<b>emphasize</b>: ${[...r.emphasize].map(name).join(", ")}`);
+    }
+    if (r.suppress.size > 0) {
+      parts.push(`<b>suppress</b>: ${[...r.suppress].map(name).join(", ")}`);
+    }
+    if (r.bridges.length > 0) {
+      parts.push(
+        `<b>bridges</b>: ${r.bridges.map((b) => b.map(name).join("↔")).join(", ")}`
+      );
+    }
+    if (parts.length === 0) {
+      this.hintEl.innerHTML =
+        `<span class="mute">${this.strokes.length} stroke(s); no recognized targets — try drawing closer to a section vertex</span>`;
+    } else {
+      this.hintEl.innerHTML = parts.join(" · ");
+    }
+    this.markAffected(r.emphasize, r.suppress);
+  }
+
+  markAffected(emphasize, suppress) {
+    if (!this.sigil.sectionVertexEls) return;
+    this.sigil.sectionVertexEls.forEach((el, i) => {
+      if (!el) return;
+      el.classList.remove("affected-vertex");
+      if (emphasize.has(i) || suppress.has(i)) {
+        el.classList.add("affected-vertex");
+      }
+    });
+  }
+
+  // ===== Compose: build a prompt skeleton from drawn strokes =================
+  // Each closed stroke becomes one h1 section. Position around the rim
+  // determines order (clockwise from top). Names are auto-numbered; the user
+  // edits them after the textarea is populated.
+  blankCanvas() {
+    const sigil = this.sigil;
+    sigil.input.value = "";
+    sigil._lastPreparedText = null;
+    sigil.layout = null;
+    // Ensure the SVG structure exists (layers, rotation group, etc.) so the
+    // user can draw immediately even before any conjure has happened.
+    sigil.resetSvg();
+    if (sigil.layers) {
+      for (const [k, el] of Object.entries(sigil.layers)) {
+        if (k === "thinkingRings") continue;
+        while (el.firstChild) el.removeChild(el.firstChild);
+      }
+    }
+    sigil.sectionVertexEls = [];
+    // Add a minimal frame so the canvas isn't completely empty.
+    const layers = sigil.layers;
+    const mk = (tag, attrs, parent) => {
+      const e = document.createElementNS(SVG_NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      parent.appendChild(e);
+      return e;
+    };
+    mk("circle", { cx: CX, cy: CY, r: R.BOUND_OUT, fill: "none", stroke: INK, "stroke-width": 1.6, "stroke-opacity": 0.85 }, layers.boundary);
+    mk("circle", { cx: CX, cy: CY, r: R.BOUND_IN, fill: "none", stroke: INK, "stroke-width": 0.8, "stroke-opacity": 0.6 }, layers.boundary);
+    mk("circle", { cx: CX, cy: CY, r: R.SEAL_OUT, fill: BG, stroke: INK, "stroke-width": 0.9, "stroke-opacity": 0.8 }, layers.seal);
+    mk("circle", { cx: CX, cy: CY, r: R.SEAL_IN, fill: "none", stroke: INK, "stroke-width": 0.5, "stroke-opacity": 0.45 }, layers.seal);
+    const t = mk("text", {
+      x: CX, y: CY + 5, "text-anchor": "middle",
+      "font-family": "ui-monospace, Menlo, Consolas, monospace",
+      "font-size": "10", fill: "#888",
+    }, layers.centre);
+    t.textContent = "blank";
+
+    this.strokes = [];
+    this.composedSections = [];
+    this.composedBridges = [];
+    this.composeSelectedIdx = null;
+    document.getElementById("stats").innerHTML =
+      '<span class="mute">blank canvas — pick a glyph (◉ △ ⊞ ◇ ✦ ▽ ○ ⌬) and click on the figure</span>';
+    this.hintEl.innerHTML =
+      '<span class="mute">click <b>◉</b> persona, then click on the figure to place. click an existing vertex to cycle preset.</span>';
+    this.setComposeMode("place:persona");
+  }
+
+  scaffoldPrompt() {
+    // Combine typed-click sections (preferred) with freehand closed strokes
+    // (legacy fallback for free-form input).
+    const items = [];
+    this.composedSections.forEach((s, idx) => {
+      const t = SECTION_TYPES[s.type] || SECTION_TYPES.persona;
+      const preset = t.presets[s.presetIndex];
+      const myBridges = this.composedBridges
+        .filter((b) => b.a === idx || b.b === idx)
+        .map((b) => {
+          const other = this.composedSections[b.a === idx ? b.b : b.a];
+          const ot = SECTION_TYPES[other.type] || SECTION_TYPES.persona;
+          return `${ot.label} (${ot.presets[other.presetIndex].name})`;
+        });
+      // Capitalise the type label for the heading: "persona" → "Persona"
+      const heading =
+        t.label.charAt(0).toUpperCase() + t.label.slice(1) +
+        " — " + preset.name;
+      items.push({
+        angle: s.angle,
+        heading,
+        body: preset.body,
+        bridges: myBridges,
+      });
+    });
+    // Freehand closed strokes -> generic placeholder section
+    const closed = this.strokes
+      .map((s) => ({ s, c: this.classifyOne(s) }))
+      .filter((x) => x.c.closed);
+    closed.forEach(({ s }) => {
+      const cx = s.points.reduce((a, p) => a + p[0], 0) / s.points.length;
+      const cy = s.points.reduce((a, p) => a + p[1], 0) / s.points.length;
+      const angle = Math.atan2(cy - 800, cx - 800);
+      items.push({
+        angle,
+        heading: `Section ${items.length + 1}`,
+        body: "(placeholder — describe this section)",
+        bridges: [],
+      });
+    });
+
+    if (items.length === 0) {
+      this.hintEl.innerHTML =
+        '<span style="color:#a33">place at least one typed section (◉ △ ⊞ …) or draw a closed shape</span>';
+      return;
+    }
+
+    items.forEach((it) => {
+      it.sortKey = (it.angle - (-Math.PI / 2) + 2 * Math.PI) % (2 * Math.PI);
+    });
+    items.sort((a, b) => a.sortKey - b.sortKey);
+
+    const lines = [];
+    items.forEach((it) => {
+      lines.push(`# ${it.heading}`);
+      lines.push("");
+      lines.push(it.body);
+      if (it.bridges.length > 0) {
+        lines.push("");
+        lines.push(`Related: ${it.bridges.join("; ")}.`);
+      }
+      lines.push("");
+    });
+    this.sigil.input.value = lines.join("\n");
+    this.hintEl.innerHTML =
+      `<b>scaffolded ${items.length} section(s)</b> — click <i>conjure</i> to render the real sigil`;
+    if (this.drawing) this.toggleMode();
+    if (this.composeMode !== "off") this.setComposeMode("off");
+  }
+
+  // Build the textual annotation appended to the user query.
+  toQueryAnnotation() {
+    if (!this.sigil.layout || this.strokes.length === 0) return "";
+    const r = this.interpret();
+    const sections = this.sigil.layout.sections;
+    const nm = (i) => (sections[i] ? sections[i].heading : `section ${i}`);
+    const parts = [];
+    if (r.emphasize.size > 0) {
+      parts.push(`focus on: ${[...r.emphasize].map(nm).join(", ")}`);
+    }
+    if (r.suppress.size > 0) {
+      parts.push(`avoid: ${[...r.suppress].map(nm).join(", ")}`);
+    }
+    if (r.bridges.length > 0) {
+      parts.push(
+        `combine: ${r.bridges.map((b) => b.map(nm).join(" with ")).join("; ")}`
+      );
+    }
+    return parts.length > 0 ? `\n\n[user-drawn intent: ${parts.join("; ")}]` : "";
+  }
+}
+
+const sigilApp = new Sigil();
+const llmApp = new LLM(sigilApp);
+const sketcher = new Sketcher(sigilApp);
+window.sigil = sigilApp;
+window.llm = llmApp;
+window.sketcher = sketcher;
+</script>
+</body>
+</html>
