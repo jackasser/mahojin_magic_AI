@@ -228,9 +228,9 @@ If you use this work in research, please cite:
 
 ```
 @misc{prompt-sigil-2026,
-  title  = {Prompt Sigil: A Magic-Circle Protocol for Human–AI Communication},
+  title  = {Prompt Sigil: A Magic-Circle Protocol for Human--AI Communication},
   year   = {2026},
-  url    = {https://github.com/.../prompt-sigil}
+  url    = {https://github.com/jackasser/mahojin_magic_AI}
 }
 ```
 
