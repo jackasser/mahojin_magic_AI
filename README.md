@@ -4,12 +4,22 @@
 > Build prompts by drawing, see the model's thinking projected back into the
 > same figure.
 
-![Prompt Sigil web app, complex prompt with thought trajectory](docs/preview.png)
+<p align="center">
+  <img src="docs/demo.gif" alt="Prompt Sigil rotating with all 35 sections of a complex system prompt" width="520">
+</p>
+
+A 1040-token system prompt rendered into 35 angular slots, with cosine
+similarities forming the inner polygon. The figure rotates slowly via CSS
+keyframes so the animation continues even when the in-browser LLM blocks
+the main thread.
 
 | 1. blank | 2. place glyphs | 3. bridge | 4. conjure |
 |:---:|:---:|:---:|:---:|
 | ![](docs/01-blank.png) | ![](docs/02-typed.png) | ![](docs/03-bridged.png) | ![](docs/04-conjured.png) |
 | empty canvas | click `◉ △ ⊞ ▽ ✦` to place typed sections (snap to rim) | click two vertices to bridge | scaffold + conjure → real sigil with k-NN polygon |
+
+The full UI with the gold thought trail drawn after a generation:
+![Prompt Sigil web app, complex prompt with thought trajectory](docs/preview.png)
 
 ## What this is
 
