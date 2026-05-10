@@ -1,2 +1,9 @@
 numpy>=1.24
 scikit-learn>=1.3
+
+# Optional — only needed for the tensor scope (server-side hidden-state
+# extraction with logit lens). The base sigil + compression run without
+# torch. Uncomment to enable:
+# torch
+# transformers
+# umap-learn  # extra projection method, falls back to PCA/t-SNE if absent

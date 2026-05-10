@@ -33,9 +33,20 @@ The aim is a **new medium for human ⇄ AI communication**:
 - **Human → AI**: place typed glyphs on a circle (persona, reasoning, tools,
   limits, …) instead of writing prose. The geometry encodes intent;
   the user types almost nothing.
-- **AI → Human**: as the model generates, its output is projected into the
-  prompt's semantic space and drawn as a trail across the figure. You can
-  *see* which parts of the prompt the model is drawing from at each moment.
+- **AI → Human (output)**: as the model generates, its output is projected
+  into the prompt's semantic space and drawn as a trail across the figure.
+  You can *see* which parts of the prompt the model is drawing from at
+  each moment.
+- **AI → Human (interior)**: open the **tensor scope** to peer inside the
+  model itself. The hidden state of every token at every layer becomes a
+  petal of a layered mandala, and a logit-lens decoder shows what word
+  the model "thinks" each token is at each depth. See the representation
+  morph from raw embedding into meaning, layer by layer.
+
+You can also reduce a prompt to a **minimal sigil-equivalent form**: the
+compressor keeps the contract-bearing parts (headings, code, imperatives,
+URLs) verbatim and ranks remaining prose by importance, so two prompts
+that produce similar sigils now also produce similar markdown.
 
 ## Why a magic circle
 
@@ -58,7 +69,8 @@ Same input always produces the same sigil. There is no randomness, no
 ## Try it
 
 Requirements: Python 3.10+, `numpy`, `scikit-learn`. No Node, no GPU, no
-build step.
+build step. The tensor scope additionally needs `torch` + `transformers`
+(CPU-only is fine) and optionally `umap-learn`.
 
 ```bash
 pip install -r requirements.txt
@@ -70,6 +82,12 @@ python webapp/server.py
 # CLI (static SVG)
 python -m prompt_sigil examples/complex.md
 # → out/complex.svg
+
+# CLI (compress; protected content survives any ratio)
+python -m prompt_sigil compress examples/complex.md --ratio 0.4 --render-pair
+# tokens     1040 -> 493  (47.4%)
+# preserved  23 imperatives, 5 code blocks, 2 urls
+# also writes before/after sigils for visual diff
 ```
 
 The webapp runs entirely on your machine. The optional in-browser LLM
@@ -99,6 +117,64 @@ You can also free-hand draw on top of an existing sigil:
 
 The drawn intent is appended to your query before inference.
 
+## Compression
+
+Click **⊿ compress** in the sidebar (or run the CLI subcommand) to
+reduce a prompt to a minimal sigil-equivalent form. The compressor:
+
+- Keeps **verbatim**: headings, fenced code blocks (with language tag),
+  URLs and file paths, and any sentence containing an imperative
+  (`MUST`/`NEVER`/`必ず`/...). These are the contract-bearing parts —
+  losing them changes LLM behaviour.
+- **Ranks** the remaining prose by TF-IDF mass (plus an optional
+  per-token importance map) and keeps the top fraction needed to hit
+  the target ratio.
+
+The output is real markdown with the original section structure intact;
+it is itself a usable system prompt, not a summary. The realised ratio
+can exceed the target when protected content dominates — semantic
+preservation wins over hitting an exact number.
+
+## Tensor scope
+
+A diagnostic window into the model's interior. Open the **⌗ tensor scope**
+panel and click **extract**: the server runs one forward pass with
+`output_hidden_states=True` (PyTorch + HF transformers, bypassing the
+ONNX-export limitation that would otherwise drop intermediate layers),
+projects all `(layer × token)` hidden states through a single shared
+PCA / UMAP / t-SNE basis, and renders one of two views.
+
+**Mandala view** is the magic-circle reading. Concentric rings = layers
+(outer = embedding, inner = output). Each token sits at a fixed angle
+around the rim; following its radial spoke shows how its representation
+travels through depth. Per-layer normalisation keeps the colours vibrant
+even when one PCA axis dominates the global variance.
+
+**Scatter view** is a 3D point cloud through PCA space, with each token's
+trajectory as a polyline. Useful for spotting clusters; less for following
+a single token.
+
+In either view, every cell carries its own meaning:
+
+- **Hover**: tooltip with token, layer, the three PC values, and the
+  top-k logit-lens predictions for that cell ([nostalgebraist 2020](https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens) — apply the model's own output head to every layer's
+  hidden state to read what word it would predict at that depth).
+- **Click a token** to follow its spoke through every layer. The selected
+  token's full D-dimensional hidden state is then drawn as a **morphing
+  radial shape** below the mandala — every dim is one petal, the shape
+  reshapes smoothly as the layer slider moves, and a synchronised bar
+  chart shows the model's top-3 predictions reshuffling. The vector is
+  the figure.
+- **Click a layer ring** to jump to that layer.
+- **Scroll** to zoom (anchored to the cursor), **drag** to pan,
+  **double-click** to reset.
+
+The tensor scope is intentionally decoupled from compression. It is a
+viewer for human inspection, not a pipeline stage; nothing flows back
+into prompt processing. (A future version may bias compression by
+hidden-state activation norms via the `token_importance` hook — see
+`webapp/static/index.html` for the wiring.)
+
 ## Architecture
 
 ```
@@ -106,19 +182,25 @@ prompt_sigil/   pure Python: markdown → measured tree → 2D projection
                   parse.py     tokens, imperatives, bullets, code, refs
                   analyze.py   TF-IDF + PCA-2 (deterministic), cosine sim
                   render.py    SVG output (CLI path)
+                  compress.py  importance-scored extractive compression
 
 webapp/         tiny stdlib HTTP server + single-file frontend
-                  server.py    /api/layout, /api/project, /files/*
+                  server.py    /api/{layout,project,compress,pca,
+                               hidden_states,files}
+                               (HF transformers used only by hidden_states
+                                — keeps the base demo torch-free)
                   static/index.html
-                    Sigil class    rotating SVG renderer + animations
-                    LLM class      transformers.js streaming + replay
-                    Sketcher class freehand strokes + typed-glyph composer
+                    Sigil class       rotating SVG renderer + animations
+                    LLM class         transformers.js streaming + replay
+                    Sketcher class    freehand strokes + typed-glyph composer
+                    TensorScope class hidden-state mandala / scatter,
+                                       logit lens, vector morph, zoom-pan
 
 examples/       sample prompts (sample.md, complex.md)
 out/            generated SVGs
 ```
 
-Three frontend classes, one file, no framework.
+Four frontend classes, one file, no framework.
 
 ## Status
 
@@ -131,6 +213,14 @@ Working today (May 2026):
 - CSS-driven rotation that survives WASM main-thread blockage.
 - Free-hand stroke interpretation (emphasize / suppress / bridge).
 - One-click prompt scaffolding from typed-glyph composition.
+- Extractive prompt compression that preserves sigil semantics.
+- Tensor scope: per-layer per-token mandala with PCA / UMAP / t-SNE
+  projection, zoom-pan, hover tooltips, and click-to-follow.
+- Logit lens decoding for causal-LM scope models — read what the model
+  thinks each token is at each layer.
+- Selected-token morph: raw D-dim hidden state drawn as a closed radial
+  shape that visibly reshapes between layers, synced with a top-k bar
+  chart of the model's predictions.
 
 Not built yet, but desired (PRs welcome — see the
 [roadmap](#roadmap-help-wanted) below).
