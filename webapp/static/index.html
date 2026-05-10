@@ -22,6 +22,15 @@
     font-size: 13px;
   }
   body { display: grid; grid-template-columns: 420px 1fr; height: 100vh; }
+  /* When tensor scope is open, the diagnostic view becomes the page.
+     Hiding the right column entirely (instead of just fading it) prevents
+     the magic-circle's huge corner from bleeding into the scope viewport.
+     body:has() invalidation isn't reliable for <details open> in current
+     Chromium, so we toggle .scope-active via JS. */
+  body { transition: grid-template-columns 0.35s ease; }
+  body.scope-active { grid-template-columns: 1fr; }
+  body.scope-active .right { display: none; }
+  body.scope-active #scope-stage { height: min(72vh, 720px) !important; }
   .left {
     border-right: 1px solid #d8d4c4;
     display: grid;
@@ -284,6 +293,7 @@
       <div class="row">
         <button id="go">conjure</button>
         <button id="restart" disabled>restart</button>
+        <button id="compress-btn" title="compress while preserving sigil semantics">⊿ compress</button>
         <button id="rotate-toggle" title="pause/resume rotation">⏸</button>
         <span class="mute">spd</span>
         <input type="range" id="rotate-speed" min="0" max="100" value="40" style="width:80px" title="rotation speed">
@@ -295,6 +305,69 @@
         <span id="now-section" class="mute">—</span>
       </div>
     </div>
+
+    <details class="live" id="scope-panel">
+      <summary>⌗ tensor scope (peer into the model's hidden states)</summary>
+      <div class="live-body">
+        <div class="row">
+          <span class="mute">scope model</span>
+          <input id="scope-model" value="HuggingFaceTB/SmolLM2-135M-Instruct" style="flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px"
+            title="HF model id for tensor extraction. Runs server-side via PyTorch (full hidden_states regardless of ONNX export).">
+        </div>
+        <div class="row">
+          <button id="scope-run" title="forward pass with output_hidden_states">extract</button>
+          <span class="mute">proj</span>
+          <select id="scope-method" title="dimensionality reduction. PCA is honest about distance; UMAP/t-SNE distort distance for clearer clusters">
+            <option value="pca" selected>PCA (honest)</option>
+            <option value="umap">UMAP (clusters)</option>
+            <option value="tsne">t-SNE (slow)</option>
+          </select>
+          <span class="mute">view</span>
+          <select id="scope-view" title="scatter = 3D point cloud through PCA space; mandala = concentric layer rings with each token at a fixed angle">
+            <option value="mandala" selected>mandala (sigil)</option>
+            <option value="scatter">scatter (3D)</option>
+          </select>
+          <span id="scope-status" class="mute" style="font-size:11px"></span>
+        </div>
+        <div class="row">
+          <span class="mute">layer</span>
+          <input type="range" id="scope-layer" min="0" max="100" value="0" style="width:200px" disabled>
+          <span id="scope-layer-label" class="mute">—</span>
+          <button id="scope-play" disabled title="play / pause layer sweep">▶</button>
+          <span class="mute">spd</span>
+          <input type="range" id="scope-speed" min="1" max="20" value="6" style="width:80px" title="layers / second">
+          <button id="scope-tilt" title="toggle 3D tilt">⟲ tilt</button>
+        </div>
+        <div id="scope-stage" style="position:relative;width:100%;height:480px;background:#0e0e10;border-radius:6px;overflow:hidden;perspective:1000px">
+          <svg id="scope-svg" xmlns="http://www.w3.org/2000/svg" viewBox="-200 -200 400 400" style="width:100%;height:100%;transform-style:preserve-3d;transition:transform 0.4s ease"></svg>
+          <div id="scope-tooltip" style="position:absolute;pointer-events:none;display:none;background:rgba(20,22,28,0.95);color:#dde3eb;border:1px solid #444a55;border-radius:4px;padding:6px 8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;white-space:pre;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,0.4)"></div>
+          <div id="scope-hint" style="position:absolute;left:8px;bottom:6px;color:#5a626d;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;pointer-events:none">click token → follow spoke · click ring → jump layer · scroll → zoom · drag → pan · dblclick → reset</div>
+        </div>
+        <div id="scope-meta" class="mute" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;white-space:pre"></div>
+        <div id="scope-morph-row" style="display:none;margin-top:8px;gap:12px;align-items:center">
+          <div style="flex:0 0 auto">
+            <svg id="scope-morph-svg" xmlns="http://www.w3.org/2000/svg" viewBox="-110 -110 220 220" style="width:220px;height:220px;background:#0e0e10;border-radius:6px"></svg>
+          </div>
+          <div id="scope-morph-info" style="flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#cbd2da;line-height:1.6"></div>
+        </div>
+        <div id="scope-trajectory" style="margin-top:6px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;color:#444"></div>
+      </div>
+    </details>
+
+    <details class="live" id="compress-panel">
+      <summary>⊿ compress (prompt → minimal sigil-equivalent prompt)</summary>
+      <div class="live-body">
+        <div class="row">
+          <span class="mute">retain</span>
+          <input type="range" id="compress-ratio" min="10" max="90" value="50" style="width:140px">
+          <span id="compress-ratio-label" class="mute">50%</span>
+          <button id="compress-run">compress</button>
+          <button id="compress-apply" disabled title="replace input with compressed prompt">apply</button>
+        </div>
+        <div id="compress-stats" class="mute" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;white-space:pre"></div>
+        <textarea id="compress-output" placeholder="compressed prompt appears here..." style="width:100%;height:180px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px"></textarea>
+      </div>
+    </details>
 
     <details class="live" id="draw-panel" open>
       <summary>draw on the sigil (talk to AI in glyphs)</summary>
@@ -392,7 +465,7 @@
 <script type="module">
 "use strict";
 
-import { pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+import { pipeline, TextStreamer, AutoTokenizer, AutoModel } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const SVG_SIZE = 1600;
@@ -1527,6 +1600,105 @@ class LLM {
     this.stopBtn.disabled = true;
     this.modelStatus.textContent = "stopped (output continues internally)";
   }
+
+  // Run a forward pass with output_hidden_states and return per-layer
+  // per-token hidden state tensors. Used by TensorScope for visualization.
+  //
+  // Decoupled from the generation pipeline: the user picks a model whose
+  // ONNX export exposes hidden_states (most embedding models do; many
+  // quantised CausalLM exports do NOT, even with output_hidden_states=true,
+  // because the output node is missing from the graph).
+  async extractHiddenStates(text, statusCb, modelId) {
+    const id = modelId || this.modelId;
+    if (!id) throw new Error("specify a scope model or load a generator first");
+    const setStatus = (msg) => {
+      if (statusCb) statusCb(msg);
+      this.modelStatus.textContent = msg;
+    };
+    if (!this._tokenizer || this._scopeModelId !== id) {
+      setStatus(`tensor-scope: loading tokenizer (${id})...`);
+      this._tokenizer = await AutoTokenizer.from_pretrained(id);
+      setStatus(`tensor-scope: loading model (${id})...`);
+      // WASM is more reliable for embedding models — WebGPU's Add kernels
+      // have shape-broadcasting bugs with some BERT-family embedding layers.
+      // Tensor scope is small + one-shot, so WASM cost is negligible.
+      let lastErr;
+      this._model = null;
+      for (const cfg of [
+        { device: "wasm", dtype: "fp32" },
+        { device: "wasm", dtype: "q8" },
+        { device: "webgpu", dtype: "fp32" },
+        { device: "webgpu", dtype: "q4" },
+      ]) {
+        try {
+          this._model = await AutoModel.from_pretrained(id, cfg);
+          setStatus(`tensor-scope: loaded ${id} on ${cfg.device}/${cfg.dtype}`);
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      if (!this._model) throw lastErr || new Error("model load failed");
+      this._scopeModelId = id;
+    }
+    setStatus("tensor-scope: tokenizing...");
+    const inputs = await this._tokenizer(text, { return_tensors: "pt" });
+    setStatus("tensor-scope: forward pass (output_hidden_states=true)...");
+    const t0 = performance.now();
+    const out = await this._model(inputs, { output_hidden_states: true });
+    const elapsedMs = (performance.now() - t0).toFixed(0);
+
+    // Inspect what the model actually returned. Many quantised CausalLM ONNX
+    // exports drop the hidden_states output node from the graph, so the flag
+    // is silently ignored.
+    const keys = Object.keys(out || {});
+    console.log("[tensor-scope] model output keys:", keys, out);
+
+    let hsList = out.hidden_states;
+    if ((!hsList || hsList.length === 0) && out.last_hidden_state) {
+      // Single-layer fallback: only the final encoder state is exposed.
+      hsList = [out.last_hidden_state];
+    }
+    if (!hsList || hsList.length === 0) {
+      throw new Error(
+        "model did not return hidden_states. The ONNX graph for `" + id +
+        "` does not expose intermediate states. Try an embedding model: " +
+        "Xenova/all-MiniLM-L6-v2, Xenova/bge-small-en-v1.5, or " +
+        "Xenova/jina-embeddings-v2-small-en. Output keys were: [" +
+        keys.join(", ") + "]"
+      );
+    }
+    // hidden_states is a list of tensors of shape [batch, seq, hidden].
+    const numLayers = hsList.length;
+    const firstShape = hsList[0].dims;
+    const seqLen = firstShape[firstShape.length - 2];
+    const hidden = firstShape[firstShape.length - 1];
+    const ids = Array.from(inputs.input_ids.data, (v) => Number(v));
+    let tokenStrings;
+    try {
+      tokenStrings = ids.map((tid) =>
+        this._tokenizer.decode([tid], { skip_special_tokens: false })
+      );
+    } catch (e) {
+      tokenStrings = ids.map((tid) => `#${tid}`);
+    }
+    const layers = hsList.map((t) => {
+      const arr = t.data;
+      if (arr instanceof Float32Array) return arr;
+      return Float32Array.from(arr);
+    });
+    setStatus(
+      `tensor-scope: forward in ${elapsedMs}ms · ${numLayers} layers × ${seqLen} tokens × ${hidden} dim`
+    );
+    return {
+      tokens: tokenStrings,
+      tokenIds: ids,
+      numLayers,
+      seqLen,
+      hidden,
+      layers,
+    };
+  }
 }
 
 function polar(r, theta) {
@@ -2390,12 +2562,968 @@ class Sketcher {
   }
 }
 
+// ---------------------------------------------------------------------------
+// TensorScope — animated viewer for the model's internal tensor.
+//
+// Pure observation: runs one forward pass, projects all (layer × token)
+// hidden states through a single shared PCA-3 basis (so motion across layers
+// is real change in representation, not artefacts of per-layer rebasing),
+// then animates the layer index. The user watches token representations
+// evolve from raw embedding through the model's stack.
+//
+// Decoupled from compress.py — this is a diagnostic window, not a pipeline
+// stage. No values flow back into prompt processing.
+// ---------------------------------------------------------------------------
+class TensorScope {
+  constructor(llm) {
+    this.llm = llm;
+    this.svg = document.getElementById("scope-svg");
+    this.statusEl = document.getElementById("scope-status");
+    this.metaEl = document.getElementById("scope-meta");
+    this.runBtn = document.getElementById("scope-run");
+    this.layerInput = document.getElementById("scope-layer");
+    this.layerLabel = document.getElementById("scope-layer-label");
+    this.playBtn = document.getElementById("scope-play");
+    this.speedInput = document.getElementById("scope-speed");
+    this.tiltBtn = document.getElementById("scope-tilt");
+
+    this.tokens = null;
+    this.numLayers = 0;
+    this.points3d = null; // [layer][token][3]
+    this.bounds = null;
+    this.lens = null;     // [layer][token][k] = {token, id, prob}
+    this.selectedToken = null;
+    this.playing = false;
+    this.tilted = true;
+    this.mode = "layers"; // 'layers' or 'positions'
+    this.tooltip = document.getElementById("scope-tooltip");
+    this.stage = document.getElementById("scope-stage");
+    this.trajectoryEl = document.getElementById("scope-trajectory");
+    this.morphRow = document.getElementById("scope-morph-row");
+    this.morphSvg = document.getElementById("scope-morph-svg");
+    this.morphInfo = document.getElementById("scope-morph-info");
+    // Mandala zoom/pan state. Base viewBox is centred on origin with
+    // half-extent BASE_HALF; zoom > 1 = zoomed in.
+    this.BASE_HALF = 220;
+    this.zoom = 1;
+    this.panX = 0;
+    this.panY = 0;
+    this._dragging = false;
+    this._dragStart = null;
+    this.applyTilt();
+    this._wireSvgInteraction();
+
+    this.modelInput = document.getElementById("scope-model");
+    this.methodSelect = document.getElementById("scope-method");
+    this.viewSelect = document.getElementById("scope-view");
+    this.panel = document.getElementById("scope-panel");
+    this.runBtn.addEventListener("click", () => this.extract());
+
+    // Fade the magic-circle sigil while the scope panel is open so the
+    // diagnostic view doesn't fight for attention.
+    const syncBodyClass = () => {
+      document.body.classList.toggle("scope-active", this.panel.open);
+    };
+    this.panel.addEventListener("toggle", syncBodyClass);
+    syncBodyClass();
+    // Re-project the cached hidden states when the user changes method —
+    // no need to re-run the model.
+    this.methodSelect.addEventListener("change", () => {
+      if (this._lastData) this.fitAndDraw(this._lastData);
+    });
+    // View toggle: re-render only (no re-projection needed).
+    this.viewSelect.addEventListener("change", () => {
+      this.applyTilt();
+      if (this.points3d) this.draw(Number(this.layerInput.value) / 100);
+    });
+    this.layerInput.addEventListener("input", () => this.draw(Number(this.layerInput.value) / 100));
+    this.playBtn.addEventListener("click", () => this.togglePlay());
+    this.tiltBtn.addEventListener("click", () => {
+      this.tilted = !this.tilted;
+      this.applyTilt();
+    });
+  }
+
+  applyTilt() {
+    // Mandala is a flat magic-circle and reads best face-on. Scatter benefits
+    // from a perspective tilt to sense the 3D depth of the trajectories.
+    const isMandala = this.viewSelect && this.viewSelect.value === "mandala";
+    if (isMandala) {
+      this.svg.style.transform = "rotateX(0deg)";
+    } else {
+      this.svg.style.transform = this.tilted
+        ? "rotateX(55deg) rotateZ(0deg)"
+        : "rotateX(0deg)";
+    }
+  }
+
+  async extract() {
+    const text = (document.getElementById("input").value || "").trim();
+    if (!text) {
+      this.statusEl.textContent = "(input is empty)";
+      return;
+    }
+    this.runBtn.disabled = true;
+    const scopeModel = (this.modelInput.value || "").trim();
+    try {
+      // Server-side path: PyTorch + HF transformers, returns ALL layers
+      // regardless of ONNX export limitations. First call per model_id is
+      // slow (download + load); subsequent calls are sub-second on CPU for
+      // small models.
+      this.statusEl.textContent = `tensor-scope: server-side extract (${scopeModel})...`;
+      const t0 = performance.now();
+      const resp = await fetch("/api/hidden_states", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, model_id: scopeModel }),
+      });
+      const raw = await resp.json();
+      if (raw.error) throw new Error(raw.error);
+      // Reshape server response into the {layers: [Float32Array...], ...}
+      // shape that fitPCA expects.
+      const layers = raw.layers.map((flat) => Float32Array.from(flat));
+      const data = {
+        tokens: raw.tokens,
+        tokenIds: raw.token_ids,
+        numLayers: raw.num_layers,
+        seqLen: raw.seq_len,
+        hidden: raw.hidden_dim,
+        layers,
+        lens: raw.lens || [],
+        headKind: raw.head_kind || "none",
+      };
+      this.lens = data.lens;
+      this.selectedToken = null;
+      this._resetView();
+      const ms = (performance.now() - t0) | 0;
+      this.statusEl.textContent =
+        `extracted in ${ms}ms · ${data.numLayers} layers × ${data.seqLen} tokens × ${data.hidden} dim`;
+      this._lastData = data; // cache so method switches don't re-run the model
+      await this.fitAndDraw(data);
+      this.statusEl.textContent =
+        `${data.numLayers} layers × ${data.seqLen} tokens × ${data.hidden} dim`;
+      // Auto-play once after extraction so the user immediately sees motion.
+      if (!this.playing) this.togglePlay();
+    } catch (e) {
+      console.error(e);
+      this.statusEl.textContent = "extract failed: " + (e.message || e);
+    } finally {
+      this.runBtn.disabled = false;
+    }
+  }
+
+  async fitAndDraw(data) {
+    await this.fitPCA(data);
+    this.draw(0);
+    this.layerInput.disabled = false;
+    this.playBtn.disabled = false;
+  }
+
+  async fitPCA(data) {
+    // Stack all (layer × token) hidden states into a single (L*N, D) matrix.
+    const L = data.numLayers;
+    const N = data.seqLen;
+    const D = data.hidden;
+    const total = L * N;
+    const flat = new Array(total);
+    for (let l = 0; l < L; l++) {
+      const layerArr = data.layers[l];
+      for (let t = 0; t < N; t++) {
+        const off = t * D;
+        const row = new Array(D);
+        for (let d = 0; d < D; d++) row[d] = layerArr[off + d];
+        flat[l * N + t] = row;
+      }
+    }
+    const method = this.methodSelect.value || "pca";
+    this.statusEl.textContent = `projecting (${method})...`;
+    const resp = await fetch("/api/pca", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vectors: flat, dim: 3, method }),
+    });
+    const out = await resp.json();
+    if (out.error) throw new Error(out.error);
+    const points = out.points; // (L*N, 3)
+    // Reshape to [layer][token][3]
+    const points3d = new Array(L);
+    for (let l = 0; l < L; l++) {
+      const layer = new Array(N);
+      for (let t = 0; t < N; t++) layer[t] = points[l * N + t];
+      points3d[l] = layer;
+    }
+    // Compute bounds for normalization to viewBox -200..200
+    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity, zmin = Infinity, zmax = -Infinity;
+    for (let l = 0; l < L; l++) {
+      for (let t = 0; t < N; t++) {
+        const [x, y, z] = points3d[l][t];
+        if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+        if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+        if (z < zmin) zmin = z; if (z > zmax) zmax = z;
+      }
+    }
+    const span = Math.max(xmax - xmin, ymax - ymin, zmax - zmin) || 1;
+    this.points3d = points3d;
+    this.tokens = data.tokens;
+    this.numLayers = L;
+    this.seqLen = N;
+    this.bounds = { xmin, xmax, ymin, ymax, zmin, zmax, span };
+    // Auto-pick mode: if the ONNX export only gave us last_hidden_state,
+    // there's nothing to sweep across layers — switch to position-as-time.
+    this.mode = (L <= 1) ? "positions" : "layers";
+    const evLine = (out.explained_variance && out.explained_variance.length)
+      ? `explained variance: ${out.explained_variance.map((v) => (v * 100).toFixed(1) + "%").join(" / ")}`
+      : `(no explained-variance for ${out.method || "non-PCA"} projection)`;
+    this.metaEl.textContent =
+      `mode: ${this.mode} · projection: ${out.method || "pca"} (${L} layers, ${N} tokens)\n` +
+      evLine +
+      (this.mode === "positions"
+        ? "\nnote: only one layer was extracted, so the time axis is token position."
+        : "");
+  }
+
+  // t in [0,1] → either layer index (mode='layers') or token position
+  // (mode='positions', auto-selected when only one layer is available — most
+  // ONNX exports drop intermediate hidden states from the output graph).
+  draw(t) {
+    if (!this.points3d) return;
+    // Mandala view: a magic-circle of concentric layer rings with each
+    // token at a fixed angle. Only meaningful when we have multiple layers.
+    if (
+      this.viewSelect && this.viewSelect.value === "mandala" &&
+      this.mode === "layers" && this.numLayers > 1
+    ) {
+      this.drawMandala(t);
+      return;
+    }
+    const L = this.numLayers;
+    const N = this.seqLen;
+    const { xmin, xmax, ymin, ymax, zmin, zmax, span } = this.bounds;
+    const cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2, cz = (zmin + zmax) / 2;
+    const scale = 380 / span;
+    const project = (p) => [
+      (p[0] - cx) * scale,
+      (p[1] - cy) * scale,
+      (p[2] - cz) * scale,
+    ];
+    // Reset viewBox in case we just toggled away from mandala (which uses
+    // a wider box for the rim labels).
+    this.svg.setAttribute("viewBox", "-200 -200 400 400");
+    let svgChildren = "";
+    let label = "";
+
+    if (this.mode === "positions") {
+      // Single-layer mode: token order is NOT a smooth trajectory in
+      // representation space (adjacent tokens often land far apart), so a
+      // long polyline through all positions just becomes chaotic noise.
+      // Instead show the full point cloud (the prompt's semantic structure)
+      // and sweep a spotlight across positions, with a SHORT trail of the
+      // last few tokens for momentum.
+      const posF = t * (N - 1);
+      const lo = Math.floor(posF);
+      const hi = Math.min(N - 1, lo + 1);
+      const frac = posF - lo;
+      const layer0 = this.points3d[0]; // [N][3]
+      const TRAIL_K = 4;
+
+      // 1. All tokens as static dots, hue = position-in-prompt
+      for (let i = 0; i < N; i++) {
+        const p = project(layer0[i]);
+        const hue = (i * 360 / N) | 0;
+        const isPast = i <= lo;
+        svgChildren +=
+          `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${isPast ? 2.4 : 1.6}" ` +
+          `fill="hsl(${hue} ${isPast ? 70 : 35}% ${isPast ? 60 : 38}%)" ` +
+          `fill-opacity="${isPast ? 0.9 : 0.45}"/>`;
+      }
+
+      // 2. Short trail (last TRAIL_K tokens) — meaningful momentum
+      const trailStart = Math.max(0, lo - TRAIL_K);
+      const trail = [];
+      for (let i = trailStart; i <= lo; i++) {
+        const p = project(layer0[i]);
+        trail.push(`${p[0].toFixed(1)},${p[1].toFixed(1)}`);
+      }
+      if (trail.length > 1) {
+        svgChildren +=
+          `<polyline points="${trail.join(" ")}" fill="none" stroke="#7df" stroke-width="1.2" stroke-opacity="0.7" stroke-linecap="round"/>`;
+      }
+
+      // 3. Spotlight on the current token (interpolated, glowing)
+      const a = project(layer0[lo]);
+      const b = project(layer0[hi]);
+      const x = a[0] + (b[0] - a[0]) * frac;
+      const y = a[1] + (b[1] - a[1]) * frac;
+      const hue = (lo * 360 / N) | 0;
+      svgChildren +=
+        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9" ` +
+        `fill="hsl(${hue} 90% 65%)" fill-opacity="0.18"/>` +
+        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" ` +
+        `fill="hsl(${hue} 95% 70%)" stroke="white" stroke-width="0.7"/>`;
+      const tokTxt = (this.tokens && this.tokens[lo]) ? this.tokens[lo] : `#${lo}`;
+      svgChildren +=
+        `<text x="${(x + 7).toFixed(1)}" y="${(y - 7).toFixed(1)}" ` +
+        `fill="#fff" font-size="10" font-family="ui-monospace,Menlo,Consolas,monospace" ` +
+        `style="paint-order:stroke;stroke:#000;stroke-width:2.5px;stroke-linejoin:round">${escape(tokTxt.slice(0, 24))}</text>`;
+      label = `pos ${lo + 1} / ${N} · "${tokTxt.replace(/\s+/g, "·")}"`;
+    } else {
+      // Original layer-sweep mode. Time axis = layer; tokens persist; trail
+      // = the path each token took through representation space across
+      // layers.
+      const layerF = t * (L - 1);
+      const lo = Math.floor(layerF);
+      const hi = Math.min(L - 1, lo + 1);
+      const frac = layerF - lo;
+      for (let tok = 0; tok < N; tok++) {
+        const trail = [];
+        for (let l = 0; l <= lo; l++) {
+          const p = project(this.points3d[l][tok]);
+          trail.push(`${p[0].toFixed(1)},${p[1].toFixed(1)}`);
+        }
+        if (trail.length > 1) {
+          const hue = (tok * 360 / N) | 0;
+          svgChildren +=
+            `<polyline points="${trail.join(" ")}" fill="none" stroke="hsl(${hue} 70% 55%)" stroke-width="0.6" stroke-opacity="0.35"/>`;
+        }
+      }
+      for (let tok = 0; tok < N; tok++) {
+        const a = project(this.points3d[lo][tok]);
+        const b = project(this.points3d[hi][tok]);
+        const x = a[0] + (b[0] - a[0]) * frac;
+        const y = a[1] + (b[1] - a[1]) * frac;
+        const hue = (tok * 360 / N) | 0;
+        svgChildren +=
+          `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.2" ` +
+          `fill="hsl(${hue} 80% 60%)" fill-opacity="0.92"/>`;
+      }
+      label = `layer ${(layerF + 1).toFixed(1)} / ${L}`;
+    }
+
+    let grid = "";
+    for (let g = -200; g <= 200; g += 50) {
+      grid += `<line x1="${g}" y1="-200" x2="${g}" y2="200" stroke="#222" stroke-width="0.4"/>`;
+      grid += `<line x1="-200" y1="${g}" x2="200" y2="${g}" stroke="#222" stroke-width="0.4"/>`;
+    }
+    this.svg.innerHTML = grid + svgChildren;
+    this.layerLabel.textContent = label;
+    this.layerInput.value = String(Math.round(t * 100));
+  }
+
+  // Mandala: concentric layer rings. Outer = embedding (raw token), inner =
+  // output (final representation). Each token has a FIXED angle around the
+  // circle, so a token's "vertical column" through layers is a radial spoke
+  // — easy to follow how that token's representation evolves.
+  //
+  // Per-(layer, token) point colour comes from the PCA projection:
+  //   hue        ← sign of PCA-1 (red ↔ blue, the dominant variance axis)
+  //   brightness ← |PCA-1| normalised
+  //   angle jitter ← PCA-2 (gives each ring a slight rotational ripple,
+  //                          showing the second-order variance honestly)
+  // The "current" layer ring is drawn with extra glow.
+  drawMandala(t) {
+    const L = this.numLayers;
+    const N = this.seqLen;
+    const layerF = t * (L - 1);
+    const lo = Math.floor(layerF);
+    const hi = Math.min(L - 1, lo + 1);
+    const frac = layerF - lo;
+
+    // PER-LAYER normalisation. Globally one PCA axis often dominates 90%+
+    // of the variance (special tokens like [BOS]/[CLS] sit far from content
+    // tokens in every layer), which collapses every dot to the same hue.
+    // Normalising each layer independently makes the colour palette use its
+    // FULL range at every depth, so the prompt's structure always shows.
+    const layerStats = []; // [{cx, cy, cz, sx, sy, sz}] per layer
+    for (let l = 0; l < L; l++) {
+      let cx = 0, cy = 0, cz = 0;
+      for (let i = 0; i < N; i++) {
+        cx += this.points3d[l][i][0];
+        cy += this.points3d[l][i][1];
+        cz += this.points3d[l][i][2];
+      }
+      cx /= N; cy /= N; cz /= N;
+      let sx = 0, sy = 0, sz = 0;
+      for (let i = 0; i < N; i++) {
+        sx = Math.max(sx, Math.abs(this.points3d[l][i][0] - cx));
+        sy = Math.max(sy, Math.abs(this.points3d[l][i][1] - cy));
+        sz = Math.max(sz, Math.abs(this.points3d[l][i][2] - cz));
+      }
+      layerStats.push({
+        cx, cy, cz,
+        sx: Math.max(1e-6, sx),
+        sy: Math.max(1e-6, sy),
+        sz: Math.max(1e-6, sz),
+      });
+    }
+    // Returns 3 normalised axes in [-1, 1] for layer l, token i.
+    const normAxes = (l, i) => {
+      const p = this.points3d[l][i];
+      const s = layerStats[l];
+      return [(p[0] - s.cx) / s.sx, (p[1] - s.cy) / s.sy, (p[2] - s.cz) / s.sz];
+    };
+
+    const R_OUT = 192;
+    const R_IN = 32;
+    const slotArc = (Math.PI * 2) / N;
+    // Layer radius: outer = layer 0, inner = layer L-1
+    const layerR = (l) => L > 1
+      ? R_OUT - (l / (L - 1)) * (R_OUT - R_IN)
+      : (R_OUT + R_IN) / 2;
+    const tokAngle = (i) => -Math.PI / 2 + i * slotArc; // start at top
+    const polar = (r, a) => [r * Math.cos(a), r * Math.sin(a)];
+    const fmt = (n) => n.toFixed(1);
+
+    let s = "";
+
+    // ---- magic-circle outer ornaments ----------------------------------
+    s += `<circle cx="0" cy="0" r="${R_OUT + 6}" fill="none" stroke="#cbd2da" stroke-width="0.6" stroke-opacity="0.4"/>`;
+    s += `<circle cx="0" cy="0" r="${R_OUT + 2}" fill="none" stroke="#cbd2da" stroke-width="0.3" stroke-opacity="0.3"/>`;
+    s += `<circle cx="0" cy="0" r="${R_IN - 4}" fill="none" stroke="#cbd2da" stroke-width="0.4" stroke-opacity="0.4"/>`;
+
+    // ---- per-layer faint guide rings (clickable to jump layer) ---------
+    for (let l = 0; l < L; l++) {
+      const r = layerR(l);
+      const isCurrent = (l === lo);
+      const op = isCurrent ? 0.45 : 0.10;
+      s += `<circle cx="0" cy="0" r="${fmt(r)}" fill="none" stroke="#9aa" stroke-width="${isCurrent ? 0.9 : 0.3}" stroke-opacity="${op}" data-layer="${l}" class="scope-ring" style="cursor:pointer"/>`;
+    }
+
+    // ---- spoke dividers between token slots ----------------------------
+    for (let i = 0; i < N; i++) {
+      const a = tokAngle(i) - slotArc / 2;
+      const [x1, y1] = polar(R_IN - 2, a);
+      const [x2, y2] = polar(R_OUT + 4, a);
+      s += `<line x1="${fmt(x1)}" y1="${fmt(y1)}" x2="${fmt(x2)}" y2="${fmt(y2)}" stroke="#3a4250" stroke-width="0.3" stroke-opacity="0.4"/>`;
+    }
+
+    // ---- per-(layer, token) cells --------------------------------------
+    const sel = this.selectedToken;
+    for (let l = 0; l < L; l++) {
+      const r = layerR(l);
+      const distFromCurrent = Math.abs(l - layerF);
+      let layerOpacity;
+      if (l <= lo) layerOpacity = 0.85;          // past + current (real)
+      else layerOpacity = 0.18;                  // future (faded)
+      if (distFromCurrent < 1) layerOpacity = 1.0;
+      for (let i = 0; i < N; i++) {
+        const [n1, n2, n3] = normAxes(l, i);
+        const hue = 220 + (-n1) * 180;
+        const wrappedHue = ((hue % 360) + 360) % 360;
+        const sat = 55 + Math.min(45, (Math.abs(n1) * 0.6 + Math.abs(n3) * 0.4) * 60);
+        const light = 38 + Math.min(40, (Math.abs(n1) * 0.5 + Math.abs(n3) * 0.5) * 30);
+        const a = tokAngle(i) + n2 * (slotArc * 0.22);
+        const [x, y] = polar(r, a);
+        const isCurrentLayer = (l === lo);
+        const mag = Math.sqrt(n1 * n1 + n2 * n2 + n3 * n3) / Math.sqrt(3);
+        let dotR = isCurrentLayer ? 2.4 + mag * 2.4 : 1.4 + mag * 1.0;
+        let cellOpacity = layerOpacity;
+        // Selection: chosen token spoke glows, others fade.
+        if (sel != null) {
+          if (i === sel) { dotR *= 1.4; cellOpacity = Math.min(1, cellOpacity + 0.15); }
+          else { cellOpacity *= 0.25; }
+        }
+        s += `<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${fmt(dotR)}" ` +
+             `fill="hsl(${wrappedHue.toFixed(0)} ${sat.toFixed(0)}% ${light.toFixed(0)}%)" ` +
+             `fill-opacity="${cellOpacity.toFixed(2)}" ` +
+             `data-layer="${l}" data-token="${i}" class="scope-cell" style="cursor:pointer"/>`;
+        if (isCurrentLayer && (sel == null || i === sel)) {
+          s += `<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${fmt(dotR + 4)}" ` +
+               `fill="hsl(${wrappedHue.toFixed(0)} ${sat.toFixed(0)}% ${(light + 15).toFixed(0)}%)" ` +
+               `fill-opacity="0.18" pointer-events="none"/>`;
+        }
+      }
+    }
+
+    // ---- radial spokes connecting same token through layers ------------
+    // Soft trails so you can read "this token's history".
+    for (let i = 0; i < N; i++) {
+      const pts = [];
+      for (let l = 0; l <= lo; l++) {
+        const [, n2] = normAxes(l, i);
+        const a = tokAngle(i) + n2 * (slotArc * 0.22);
+        const r = layerR(l);
+        pts.push(`${fmt(r * Math.cos(a))},${fmt(r * Math.sin(a))}`);
+      }
+      if (pts.length > 1) {
+        const hue = (i * 360 / N) | 0;
+        s += `<polyline points="${pts.join(" ")}" fill="none" stroke="hsl(${hue} 60% 55%)" stroke-width="0.5" stroke-opacity="0.30"/>`;
+      }
+    }
+
+    // ---- token labels around the rim (clickable) -----------------------
+    for (let i = 0; i < N; i++) {
+      const a = tokAngle(i);
+      const [x, y] = polar(R_OUT + 12, a);
+      const tok = (this.tokens && this.tokens[i]) ? this.tokens[i].slice(0, 8) : `#${i}`;
+      const angleDeg = (a * 180 / Math.PI) + 90;
+      const flip = (angleDeg > 90 && angleDeg < 270) ? 180 : 0;
+      const isSel = (sel === i);
+      s += `<text x="${fmt(x)}" y="${fmt(y)}" ` +
+           `transform="rotate(${(angleDeg + flip).toFixed(1)} ${fmt(x)} ${fmt(y)})" ` +
+           `text-anchor="middle" dominant-baseline="middle" ` +
+           `fill="${isSel ? '#ffce5a' : '#cbd2da'}" font-size="${isSel ? 8 : 6}" font-family="ui-monospace,Menlo,Consolas,monospace" ` +
+           `fill-opacity="${isSel ? 1 : 0.75}" ` +
+           `data-token="${i}" class="scope-rim-label" style="cursor:pointer">${escape(tok)}</text>`;
+    }
+
+    // ---- central seal --------------------------------------------------
+    s += `<circle cx="0" cy="0" r="${R_IN - 8}" fill="#0e0e10" stroke="#9aa" stroke-width="0.5" stroke-opacity="0.6"/>`;
+    s += `<text x="0" y="-2" text-anchor="middle" fill="#cbd2da" font-size="7" ` +
+         `font-family="ui-monospace,Menlo,Consolas,monospace">layer ${(layerF + 1).toFixed(1)}</text>`;
+    s += `<text x="0" y="7" text-anchor="middle" fill="#7a8290" font-size="5" ` +
+         `font-family="ui-monospace,Menlo,Consolas,monospace">/ ${L}</text>`;
+
+    this.svg.innerHTML = s;
+    this._applyView();
+    this.layerLabel.textContent = `layer ${(layerF + 1).toFixed(1)} / ${L}`;
+    this.layerInput.value = String(Math.round(t * 100));
+    this._updateTrajectory();
+    this._updateMorph(layerF);
+  }
+
+  // ----- Selected-token morph: draw the raw D-dim hidden state of the
+  // selected token as a closed radial shape, interpolated between adjacent
+  // layers so that moving the layer slider visibly morphs the shape. The
+  // shape's geometry IS the vector — every dimension is one petal.
+  _updateMorph(layerF) {
+    const sel = this.selectedToken;
+    if (sel == null || !this._lastData || !this._lastData.layers || !this.morphRow) {
+      if (this.morphRow) this.morphRow.style.display = "none";
+      return;
+    }
+    this.morphRow.style.display = "flex";
+    const D = this._lastData.hidden;
+    const N = this._lastData.seqLen;
+    const L = this._lastData.numLayers;
+    const lo = Math.floor(layerF);
+    const hi = Math.min(L - 1, lo + 1);
+    const frac = layerF - lo;
+
+    // Compute global normalisation: per-token max |value| across all layers
+    // so the morph uses the full radius regardless of activation magnitude.
+    if (this._morphTokenIdx !== sel) {
+      let maxAbs = 1e-6;
+      for (let l = 0; l < L; l++) {
+        const arr = this._lastData.layers[l];
+        const off = sel * D;
+        for (let d = 0; d < D; d++) {
+          const v = Math.abs(arr[off + d]);
+          if (v > maxAbs) maxAbs = v;
+        }
+      }
+      this._morphMaxAbs = maxAbs;
+      this._morphTokenIdx = sel;
+    }
+    const norm = this._morphMaxAbs;
+
+    const arrLo = this._lastData.layers[lo];
+    const arrHi = this._lastData.layers[hi];
+    const offLo = sel * D;
+    const offHi = sel * D;
+    const R_MAX = 95;
+    const R_MIN = 14; // small inner ring so zero values still draw
+    const cx = 0, cy = 0;
+
+    // Build a closed polar path. Each dim → angle = d/D * 2π.
+    let posPath = "";
+    let negPath = "";
+    let firstPos = true;
+    let firstNeg = true;
+    const polar = (r, a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+
+    // Sum-of-squares sanity for the ring outline.
+    let energy = 0;
+    for (let d = 0; d < D; d++) {
+      const v = arrLo[offLo + d] * (1 - frac) + arrHi[offHi + d] * frac;
+      energy += v * v;
+      const a = (d / D) * Math.PI * 2 - Math.PI / 2;
+      const r = R_MIN + (Math.abs(v) / norm) * (R_MAX - R_MIN);
+      const [x, y] = polar(r, a);
+      const cmd = (v >= 0)
+        ? (firstPos ? `M ${x.toFixed(2)} ${y.toFixed(2)}` : ` L ${x.toFixed(2)} ${y.toFixed(2)}`)
+        : (firstNeg ? `M ${x.toFixed(2)} ${y.toFixed(2)}` : ` L ${x.toFixed(2)} ${y.toFixed(2)}`);
+      if (v >= 0) { posPath += cmd; firstPos = false; }
+      else        { negPath += cmd; firstNeg = false; }
+    }
+    posPath += " Z";
+    negPath += " Z";
+
+    // Background reference rings
+    let bg = "";
+    bg += `<circle cx="0" cy="0" r="${R_MAX}" fill="none" stroke="#333a45" stroke-width="0.5"/>`;
+    bg += `<circle cx="0" cy="0" r="${(R_MIN + R_MAX) / 2}" fill="none" stroke="#22272e" stroke-width="0.4"/>`;
+    bg += `<circle cx="0" cy="0" r="${R_MIN}" fill="none" stroke="#22272e" stroke-width="0.4"/>`;
+    // Cross hairs every quarter
+    for (let q = 0; q < 4; q++) {
+      const a = q * Math.PI / 2 - Math.PI / 2;
+      const [x, y] = polar(R_MAX + 4, a);
+      bg += `<line x1="0" y1="0" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="#22272e" stroke-width="0.3"/>`;
+    }
+
+    // Petals (one ray per dim) — draw as faint background spokes for context.
+    let spokes = "";
+    const spokeStep = Math.max(1, Math.floor(D / 64));
+    for (let d = 0; d < D; d += spokeStep) {
+      const v = arrLo[offLo + d] * (1 - frac) + arrHi[offHi + d] * frac;
+      const a = (d / D) * Math.PI * 2 - Math.PI / 2;
+      const r = R_MIN + (Math.abs(v) / norm) * (R_MAX - R_MIN);
+      const [x, y] = polar(r, a);
+      const hue = v >= 0 ? 200 : 20;
+      spokes += `<line x1="0" y1="0" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="hsl(${hue} 70% 50%)" stroke-width="0.3" stroke-opacity="0.35"/>`;
+    }
+
+    // Two overlapping shapes: positive (cyan/blue) and negative (orange/red).
+    const shapes =
+      `<path d="${posPath}" fill="hsl(200 70% 55% / 0.18)" stroke="hsl(200 90% 70%)" stroke-width="0.7" stroke-opacity="0.8"/>` +
+      `<path d="${negPath}" fill="hsl(20 80% 55% / 0.18)" stroke="hsl(20 90% 65%)" stroke-width="0.7" stroke-opacity="0.8"/>`;
+
+    // Centre label: token + L<index>
+    const tok = (this.tokens && this.tokens[sel]) ? this.tokens[sel] : `#${sel}`;
+    const centre =
+      `<circle cx="0" cy="0" r="10" fill="#0e0e10"/>` +
+      `<text x="0" y="-1" text-anchor="middle" fill="#cbd2da" font-size="6" font-family="ui-monospace,Menlo,Consolas,monospace">${escape(tok.slice(0, 8).replace(/\s/g, "·"))}</text>` +
+      `<text x="0" y="6" text-anchor="middle" fill="#7a8290" font-size="5" font-family="ui-monospace,Menlo,Consolas,monospace">L${(layerF + 1).toFixed(1)}</text>`;
+
+    this.morphSvg.innerHTML = bg + spokes + shapes + centre;
+
+    // Side info: top-3 logit lens predictions for current layer (interp lo).
+    const cands = (this.lens && this.lens[lo]) ? this.lens[lo][sel] : null;
+    let info = `<b style="color:#fff">"${escape(tok.replace(/\s/g, "·"))}"</b> @ layer ${(layerF + 1).toFixed(1)} / ${L}<br>`;
+    info += `<span style="color:#7a8290">||h||² = ${energy.toFixed(2)} · ${D} dims</span><br><br>`;
+    info += `<span style="color:#7a8290">model thinks this is:</span><br>`;
+    if (cands && cands.length) {
+      for (const c of cands) {
+        const w = (c.prob * 200).toFixed(0);
+        const text = (c.token || "").replace(/\s/g, "·").slice(0, 16) || "·";
+        info += `<div style="margin:2px 0">` +
+          `<span style="display:inline-block;width:${Math.max(4, +w)}px;height:8px;background:hsl(${(180 - c.prob * 180)|0} 70% 50%);vertical-align:middle;margin-right:6px"></span>` +
+          `<span style="color:#dde3eb">${escape(text)}</span>` +
+          `<span style="color:#7a8290"> ${(c.prob * 100).toFixed(1)}%</span>` +
+          `</div>`;
+      }
+    } else {
+      info += `<span style="color:#666">(no logit-lens for this model)</span>`;
+    }
+    this.morphInfo.innerHTML = info;
+  }
+
+  // ----- Zoom / pan (mandala mode) -------------------------------------
+  _applyView() {
+    const half = this.BASE_HALF / this.zoom;
+    const x = -half + this.panX;
+    const y = -half + this.panY;
+    const w = half * 2;
+    this.svg.setAttribute("viewBox", `${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${w.toFixed(2)}`);
+  }
+
+  _resetView() {
+    this.zoom = 1;
+    this.panX = 0;
+    this.panY = 0;
+    this._applyView();
+  }
+
+  _svgPoint(e) {
+    const pt = this.svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = this.svg.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+    return pt.matrixTransform(ctm.inverse());
+  }
+
+  _onWheel(e) {
+    if (this.viewSelect.value !== "mandala") return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const newZoom = Math.max(0.5, Math.min(10, this.zoom * factor));
+    if (newZoom === this.zoom) return;
+    // Anchor: keep the point under the cursor fixed in screen space.
+    const before = this._svgPoint(e);
+    this.zoom = newZoom;
+    this._applyView();
+    const after = this._svgPoint(e);
+    this.panX += before.x - after.x;
+    this.panY += before.y - after.y;
+    this._applyView();
+  }
+
+  _onPanStart(e) {
+    if (this.viewSelect.value !== "mandala") return;
+    if (e.button !== 0) return;
+    // Don't start a pan if user clicked an interactive cell — let click
+    // selection win. Simple heuristic: only initiate pan from background.
+    if (e.target.closest(".scope-cell, .scope-rim-label, .scope-ring")) return;
+    this._dragging = true;
+    this._dragStart = { x: e.clientX, y: e.clientY, panX: this.panX, panY: this.panY };
+    this.svg.style.cursor = "grabbing";
+  }
+
+  _onPanMove(e) {
+    if (!this._dragging) return;
+    const ctm = this.svg.getScreenCTM();
+    if (!ctm) return;
+    const a = ctm.a; // x scale (svg → screen)
+    const d = ctm.d; // y scale
+    const dx = (e.clientX - this._dragStart.x) / a;
+    const dy = (e.clientY - this._dragStart.y) / d;
+    this.panX = this._dragStart.panX - dx;
+    this.panY = this._dragStart.panY - dy;
+    this._applyView();
+  }
+
+  _onPanEnd() {
+    if (!this._dragging) return;
+    this._dragging = false;
+    this.svg.style.cursor = "";
+  }
+
+  // When a token is selected and lens data is available, show the
+  // layer-by-layer top-1 prediction for that token. This is the most direct
+  // way to read the model's "thought process": a token starts as itself
+  // (raw embedding) and morphs into something meaningful by deeper layers.
+  _updateTrajectory() {
+    if (!this.trajectoryEl) return;
+    const sel = this.selectedToken;
+    if (sel == null || !this.lens || this.lens.length === 0) {
+      this.trajectoryEl.innerHTML = (this.lens && this.lens.length === 0)
+        ? "<span style='color:#888'>logit lens unavailable for this model (no decoder head)</span>"
+        : "";
+      return;
+    }
+    const tok = (this.tokens && this.tokens[sel]) ? this.tokens[sel] : `#${sel}`;
+    const lines = [];
+    lines.push(`<b>token "${escape(tok)}" (pos ${sel}) · layer-by-layer top-1 prediction:</b>`);
+    const items = [];
+    for (let l = 0; l < this.lens.length; l++) {
+      const cands = this.lens[l][sel];
+      if (!cands || !cands.length) continue;
+      const top = cands[0];
+      const pct = (top.prob * 100).toFixed(0);
+      const text = (top.token || "").replace(/\s/g, "·").slice(0, 12) || "·";
+      items.push(
+        `<span style="display:inline-block;margin:1px 4px;padding:1px 5px;background:#262a32;color:#cbd2da;border-radius:3px"><span style="color:#7a8290">L${l}</span> ${escape(text)}<span style="color:#7a8290"> ${pct}%</span></span>`
+      );
+    }
+    lines.push(items.join(""));
+    this.trajectoryEl.innerHTML = lines.join("<br>");
+    this.trajectoryEl.style.color = "#cbd2da";
+  }
+
+  // ----- SVG interaction (mandala) -------------------------------------
+  // hover  → tooltip with token, layer, PC values, logit-lens top-K
+  // click cell or rim label → select token (highlight spoke)
+  // click ring → jump to that layer
+  // click empty area → clear selection
+  _wireSvgInteraction() {
+    const svg = this.svg;
+    svg.addEventListener("mousemove", (e) => {
+      this._onHover(e);
+      this._onPanMove(e);
+    });
+    svg.addEventListener("mouseleave", () => {
+      this._hideTooltip();
+      this._onPanEnd();
+    });
+    svg.addEventListener("click", (e) => {
+      // Suppress click selection if a pan just happened and moved a few px.
+      if (this._lastPanMoved) { this._lastPanMoved = false; return; }
+      this._onClick(e);
+    });
+    svg.addEventListener("mousedown", (e) => this._onPanStart(e));
+    window.addEventListener("mouseup", () => {
+      if (this._dragging) {
+        const moved = Math.hypot(this.panX - this._dragStart.panX, this.panY - this._dragStart.panY);
+        if (moved > 1.0) this._lastPanMoved = true;
+        this._onPanEnd();
+      }
+    });
+    svg.addEventListener("wheel", (e) => this._onWheel(e), { passive: false });
+    svg.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      this._resetView();
+    });
+  }
+
+  _onHover(e) {
+    if (!this.points3d || this.viewSelect.value !== "mandala") {
+      this._hideTooltip();
+      return;
+    }
+    const cell = e.target.closest(".scope-cell, .scope-rim-label");
+    if (!cell) { this._hideTooltip(); return; }
+    const i = parseInt(cell.getAttribute("data-token"));
+    let l = parseInt(cell.getAttribute("data-layer"));
+    if (isNaN(l)) l = Math.floor(Number(this.layerInput.value) / 100 * (this.numLayers - 1));
+    this._showTooltip(e, l, i);
+  }
+
+  _showTooltip(e, l, i) {
+    const tok = (this.tokens && this.tokens[i]) ? this.tokens[i] : `#${i}`;
+    const p = this.points3d[l][i];
+    let body = `token  "${tok.replace(/\s/g, "·")}"  (pos ${i})\nlayer  ${l + 1} / ${this.numLayers}\nPC1=${p[0].toFixed(3)}  PC2=${p[1].toFixed(3)}  PC3=${p[2].toFixed(3)}`;
+    if (this.lens && this.lens[l] && this.lens[l][i]) {
+      const cands = this.lens[l][i]
+        .map((c) => `${c.token.replace(/\s/g, "·").slice(0, 14)} ${(c.prob * 100).toFixed(1)}%`)
+        .join("\n  ");
+      body += `\n\nlogit-lens top:\n  ${cands}`;
+    }
+    this.tooltip.textContent = body;
+    this.tooltip.style.display = "block";
+    // Position relative to the stage container.
+    const rect = this.stage.getBoundingClientRect();
+    let x = e.clientX - rect.left + 12;
+    let y = e.clientY - rect.top + 12;
+    // Clamp to stage so tooltip never escapes.
+    const tipRect = this.tooltip.getBoundingClientRect();
+    if (x + tipRect.width > rect.width - 4) x = rect.width - tipRect.width - 4;
+    if (y + tipRect.height > rect.height - 4) y = rect.height - tipRect.height - 4;
+    if (x < 4) x = 4;
+    if (y < 4) y = 4;
+    this.tooltip.style.left = x + "px";
+    this.tooltip.style.top = y + "px";
+  }
+
+  _hideTooltip() {
+    this.tooltip.style.display = "none";
+  }
+
+  _onClick(e) {
+    if (!this.points3d) return;
+    const ring = e.target.closest(".scope-ring");
+    if (ring) {
+      const l = parseInt(ring.getAttribute("data-layer"));
+      if (!isNaN(l) && this.numLayers > 1) {
+        const t = l / (this.numLayers - 1);
+        // Pause auto-play so the user lands cleanly on the layer they picked.
+        if (this.playing) this.togglePlay();
+        this.draw(t);
+      }
+      return;
+    }
+    const cell = e.target.closest(".scope-cell, .scope-rim-label");
+    if (cell) {
+      const i = parseInt(cell.getAttribute("data-token"));
+      if (!isNaN(i)) {
+        this.selectedToken = (this.selectedToken === i) ? null : i;
+        this.draw(Number(this.layerInput.value) / 100);
+      }
+      return;
+    }
+    // Click on background → clear selection
+    if (this.selectedToken != null) {
+      this.selectedToken = null;
+      this.draw(Number(this.layerInput.value) / 100);
+    }
+  }
+
+  togglePlay() {
+    this.playing = !this.playing;
+    this.playBtn.textContent = this.playing ? "⏸" : "▶";
+    if (this.playing) this.loop();
+  }
+
+  loop() {
+    if (!this.playing) return;
+    const speed = Number(this.speedInput.value) || 6; // layers/sec
+    const dt = 1 / 60;
+    const layersPerFrame = speed * dt;
+    const stepNorm = layersPerFrame / Math.max(1, this.numLayers - 1);
+    let cur = Number(this.layerInput.value) / 100 + stepNorm;
+    if (cur > 1) cur = 0; // loop
+    this.draw(cur);
+    requestAnimationFrame(() => this.loop());
+  }
+}
+
 const sigilApp = new Sigil();
 const llmApp = new LLM(sigilApp);
 const sketcher = new Sketcher(sigilApp);
+const tensorScope = new TensorScope(llmApp);
 window.sigil = sigilApp;
 window.llm = llmApp;
 window.sketcher = sketcher;
+window.tensorScope = tensorScope;
+
+// ---------------------------------------------------------------------------
+// Compress: prompt → minimal sigil-equivalent prompt.
+//
+// Calls /api/compress with the input markdown plus an optional token_importance
+// map. Today the map is empty (server falls back to TF-IDF + structural
+// signals). Hook for hidden-state importance: when the LLM has been loaded,
+// llmApp.tokenImportance (a {token: weight} object) — if non-empty — will be
+// sent through. That lets per-model attention/norm weights bias retention.
+// ---------------------------------------------------------------------------
+(function wireCompress() {
+  const btn = document.getElementById("compress-btn");
+  const panel = document.getElementById("compress-panel");
+  const ratioInput = document.getElementById("compress-ratio");
+  const ratioLabel = document.getElementById("compress-ratio-label");
+  const runBtn = document.getElementById("compress-run");
+  const applyBtn = document.getElementById("compress-apply");
+  const statsEl = document.getElementById("compress-stats");
+  const outEl = document.getElementById("compress-output");
+  const inputEl = document.getElementById("input");
+
+  ratioInput.addEventListener("input", () => {
+    ratioLabel.textContent = ratioInput.value + "%";
+  });
+
+  btn.addEventListener("click", () => {
+    panel.open = true;
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+
+  async function doCompress() {
+    const text = inputEl.value || "";
+    if (!text.trim()) {
+      statsEl.textContent = "(input is empty)";
+      return;
+    }
+    const ratio = Number(ratioInput.value) / 100.0;
+    runBtn.disabled = true;
+    statsEl.textContent = "compressing...";
+    const importance = (window.llm && window.llm.tokenImportance) || {};
+    try {
+      const resp = await fetch("/api/compress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, ratio, token_importance: importance }),
+      });
+      const data = await resp.json();
+      if (data.error) {
+        statsEl.textContent = "error: " + data.error;
+        return;
+      }
+      outEl.value = data.compressed;
+      const s = data.stats;
+      statsEl.textContent =
+        `tokens     ${s.original_tokens} -> ${s.compressed_tokens}  (${(s.ratio * 100).toFixed(1)}%)\n` +
+        `sentences  ${s.original_sentences} -> ${s.compressed_sentences}\n` +
+        `preserved  ${s.imperatives_preserved} imperatives, ${s.code_blocks_preserved} code blocks, ${s.urls_preserved} urls\n` +
+        `sections   ${s.sections}` +
+        (Object.keys(importance).length
+          ? `\nimportance source: ${Object.keys(importance).length} tokens weighted`
+          : "");
+      applyBtn.disabled = false;
+    } catch (e) {
+      statsEl.textContent = "fetch failed: " + (e.message || e);
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  runBtn.addEventListener("click", doCompress);
+
+  applyBtn.addEventListener("click", () => {
+    if (!outEl.value) return;
+    inputEl.value = outEl.value;
+    // Trigger the existing 'go' button so the sigil refreshes from the
+    // compressed prompt — this is the visual proof of preservation.
+    const go = document.getElementById("go");
+    if (go) go.click();
+  });
+})();
 </script>
 </body>
 </html>

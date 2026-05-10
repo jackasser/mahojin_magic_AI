@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Tuple
 
 IMPERATIVE_PATTERNS = [
     # English imperatives
@@ -39,6 +39,9 @@ class Section:
     refs: int = 0
     tokens: int = 0
     imperatives: int = 0
+    # Verbatim body blocks in document order: ("prose", "", text) or ("code", lang, body).
+    # Used by the compressor to rebuild minimal markdown without losing code or order.
+    body: List[Tuple[str, str, str]] = field(default_factory=list)
 
     def total_tokens(self) -> int:
         return self.tokens + sum(c.total_tokens() for c in self.children)
@@ -61,6 +64,8 @@ def parse_markdown(text: str) -> Section:
     in_code = False
     code_buffer: List[str] = []
 
+    code_lang = ""
+
     def flush_buffer() -> None:
         if not buffer:
             return
@@ -74,20 +79,25 @@ def parse_markdown(text: str) -> Section:
         sec.imperatives += len(IMPERATIVE_RE.findall(body))
         sec.urls += len(URL_RE.findall(body))
         sec.refs += len(PATH_RE.findall(body))
+        sec.body.append(("prose", "", body))
         buffer.clear()
 
     for line in text.splitlines():
-        if line.strip().startswith("```"):
+        stripped = line.strip()
+        if stripped.startswith("```"):
             if in_code:
                 code = "\n".join(code_buffer)
                 sec = stack[-1]
                 sec.code_blocks += 1
                 sec.code_lines += len(code_buffer)
                 sec.tokens += len(code.split())
+                sec.body.append(("code", code_lang, code))
                 code_buffer.clear()
+                code_lang = ""
                 in_code = False
             else:
                 flush_buffer()
+                code_lang = stripped[3:].strip()
                 in_code = True
             continue
         if in_code:
@@ -118,7 +128,9 @@ def parse_markdown(text: str) -> Section:
         synthetic.urls = root.urls
         synthetic.refs = root.refs
         synthetic.imperatives = root.imperatives
+        synthetic.body = list(root.body)
         root.children.append(synthetic)
+        root.body = []
         root.text = ""
         root.tokens = 0
         root.bullets = 0

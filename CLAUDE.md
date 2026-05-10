@@ -82,7 +82,49 @@ python webapp/server.py
 # CLI for static SVG
 python -m prompt_sigil examples/complex.md
 # → out/complex.svg
+
+# CLI for compression (prose retention; protected content always survives)
+python -m prompt_sigil compress examples/complex.md --ratio 0.4 --render-pair
+# → out/complex.min.md  +  out/complex.sigil.svg  +  out/complex.min.sigil.svg
 ```
+
+## Compression
+
+`prompt_sigil/compress.py` produces a minimal markdown that aims to preserve
+the same sigil semantics as the input.
+
+- **Always verbatim**: headings, code blocks (with fence language), URLs,
+  file paths, and any sentence containing an imperative
+  (`MUST`/`NEVER`/`必ず`/...). These are the contract-bearing parts of a
+  system prompt — losing them changes LLM behaviour.
+- **Score-ranked**: remaining prose is scored by TF-IDF mass plus an
+  optional `token_importance` map and the top-k retained per section to hit
+  `--ratio`. The realised ratio can exceed the target when protected content
+  dominates (correct: prefer semantic preservation over hitting a number).
+- **Webapp**: `POST /api/compress {text, ratio, token_importance?}` returns
+  `{compressed, stats}`. The compress button in the UI sends
+  `window.llm.tokenImportance` if set, so a future hidden-state probe (logit
+  lens / patchscope on the loaded transformers.js model) can bias retention
+  by per-token activation norm. The signal is model-specific by design.
+
+## Tensor scope (hidden-state viewer)
+
+`webapp/static/index.html` has a "tensor scope" panel that runs one forward
+pass of the loaded model with `output_hidden_states: true`, fits a single
+shared PCA-3 basis over the entire (layer × token) stack, and animates the
+layer index over time. The user watches each token's representation evolve
+from raw embedding → output as a moving 3D point with a fading trail.
+
+- **Why a single shared basis** (not per-layer PCA): movement across layers
+  is then real change in representation rather than an artefact of rebasing.
+  A token that "stays still" between layers really did not change.
+- **3D via CSS only**: no Three.js. The SVG sits in a `perspective` parent
+  and uses `transform-style: preserve-3d` with a fixed tilt. Adds zero deps.
+- **Server endpoint**: `POST /api/pca {vectors, dim}` → `{points,
+  explained_variance}`. Used because sklearn's PCA is faster + more accurate
+  than rolling our own in JS for a one-shot fit.
+- **Decoupled**: by design this does not feed compress.py. It is a window
+  for human inspection, not a pipeline stage.
 
 Dependencies are minimal and installed system-wide already:
 - `numpy`, `scikit-learn` (for TF-IDF + PCA + cosine_similarity)
